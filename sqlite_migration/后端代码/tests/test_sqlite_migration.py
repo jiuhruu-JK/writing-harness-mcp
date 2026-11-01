@@ -84,7 +84,8 @@ def test_migrate_applies_all_in_order(layout) -> None:
     assert data["applied_versions"] == [1, 2, 3]
     assert data["current_version"] == 3
     assert tables(database) == {"documents", "events", "mirror_log",
-                                "schema_migrations", "migration_requests"}
+                                "schema_migrations", "migration_requests",
+                                "migration_project"}
 
 
 def test_migrate_is_idempotent(layout) -> None:
@@ -93,7 +94,8 @@ def test_migrate_is_idempotent(layout) -> None:
     second = run(payload(database, root, idempotency_key="key-2"))
     assert second["data"] == first["data"]
     assert tables(database) == {"documents", "events", "mirror_log",
-                                "schema_migrations", "migration_requests"}
+                                "schema_migrations", "migration_requests",
+                                "migration_project"}
 
 
 def test_same_request_replays_first_result(layout) -> None:
@@ -630,8 +632,8 @@ def test_no_pending_migration_does_not_block_foreign_table(tmp_path: Path) -> No
     assert again["data"]["current_version"] == 1
 
 
-def test_pending_migration_still_checks_declared_tables(tmp_path: Path) -> None:
-    """有新迁移要跑时仍校验：外部表已存在也不算本次迁移建的。"""
+def test_pending_migration_tolerates_other_modules_tables(tmp_path: Path) -> None:
+    """共享库里别家模块的表不算本次越界：新迁移只对自己建的表负责。"""
     database = tmp_path / "state.db"
     root = tmp_path / "migrations"
     write_module(root, "alpha", 1, "first", ["documents"])
@@ -644,9 +646,26 @@ def test_pending_migration_still_checks_declared_tables(tmp_path: Path) -> None:
         connection.close()
     write_module(root, "alpha", 2, "second", ["notes"])
     result = run(payload(database, root, idempotency_key="key-2"))
+    assert result["ok"] is True, result
+    assert result["data"] == {"applied_versions": [1, 2], "current_version": 2}
+    assert "from_other_module" in tables(database)
+
+
+def test_pending_migration_still_rejects_own_undeclared_table(
+        tmp_path: Path) -> None:
+    """本次迁移自己建了未声明表：仍要拦住并整体回滚。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    write_module(root, "alpha", 1, "first", ["documents"])
+    run(payload(database, root))
+    path = root / "alpha" / "2_sneaky.sql"
+    path.write_text("-- tables: notes\nCREATE TABLE notes (id INTEGER);\n"
+                    "CREATE TABLE smuggled (id INTEGER);\n", encoding="utf-8")
+    result = run(payload(database, root, idempotency_key="key-2"))
     assert result["ok"] is False
-    assert result["error"]["code"] == "MIGRATION_FAILED"
-    assert "from_other_module" in result["error"]["details"]["undeclared_tables"]
+    assert result["error"]["details"]["undeclared_tables"] == ["smuggled"]
+    assert "smuggled" not in tables(database)
+    assert "notes" not in tables(database)
 
 
 def test_transaction_control_in_migration_rejected(tmp_path: Path) -> None:
@@ -674,3 +693,34 @@ def test_each_transaction_control_word_rejected(tmp_path: Path, word: str) -> No
                     encoding="utf-8")
     result = run(payload(database, root))
     assert result["error"]["code"] == "MIGRATION_FAILED"
+
+
+def test_empty_migration_still_binds_project(tmp_path: Path) -> None:
+    """零迁移首跑也要落项目绑定，别家项目随后用同一个库一律越权。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    root.mkdir()
+    (root / "empty_module").mkdir()
+    first = run(payload(database, root))
+    assert first["data"] == {"applied_versions": [], "current_version": 0}
+    same_key = run(payload(database, root, project_id="proj-2"))
+    assert same_key["error"]["code"] == "PROJECT_SCOPE_VIOLATION"
+    fresh_key = run(payload(database, root, project_id="proj-2",
+                            idempotency_key="key-2"))
+    assert fresh_key["error"]["code"] == "PROJECT_SCOPE_VIOLATION"
+    assert fresh_key["error"]["details"]["other_project_ids"] == ["proj-1"]
+
+
+def test_idempotency_row_carries_project(tmp_path: Path) -> None:
+    """幂等台账按项目分记：换个项目同键不会读到别家的首次结果。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    write_module(root, "alpha", 1, "first", ["documents"])
+    run(payload(database, root))
+    connection = sqlite3.connect(str(database))
+    try:
+        rows = connection.execute(
+            "SELECT project_id, key FROM migration_requests").fetchall()
+    finally:
+        connection.close()
+    assert rows == [("proj-1", "key-1")]

@@ -30,7 +30,7 @@ sqlite_migration/
 │   ├── 实现/
 │   │   └── sqlite_migration.py    唯一职责：读迁移声明、顺序执行、事务回滚、幂等台账
 │   └── tests/
-│       └── test_sqlite_migration.py  正常 / 失败 / 越权 54 条
+│       └── test_sqlite_migration.py  正常 / 失败 / 越权 57 条
 ├── 资料文档/
 │   └── START.md                  本文件
 └── 说明文件                       给人看的单页说明
@@ -60,7 +60,7 @@ sqlite_migration/
 - 执行顺序 = 模块名升序 + 顺序号升序；同一模块的顺序号必须从 1 起连续。
 - 文件头用 `-- tables: a, b` 声明本文件创建的表，多个表名逗号分隔。
 - 没有 `-- tables:` 头就是「一张表都不建」；建了未声明的表判失败。
-- 「只建声明表」只在本次确有迁移执行时校验：无新迁移可跑时，同一个库里别家模块的表不算越界（多模块共用一个状态库是常态）。
+- 「只建声明表」按**本次执行的差集**判：只比对「执行后新增的表」与「本次声明的表」，库里原有表（别家模块建的）不算越界。多模块共用一个状态库是常态，本模块只对自己本次执行负责。
 
 ## 错误码
 
@@ -76,9 +76,9 @@ sqlite_migration/
 
 ## 规则
 
-- 台账自己建两张表：`schema_migrations`（按 `(project_id, version)` 记录已执行版本）与 `migration_requests`（幂等请求）。这两张表由本模块负责，不算业务表。
+- 台账自己建三张表：`migration_project`（库的项目归属，单行）、`schema_migrations`（按 `(project_id, version)` 记录已执行版本）与 `migration_requests`（按 `(project_id, actor_id, key)` 记幂等请求）。这三张表由本模块负责，不算业务表。
 - 一次 `run` 就是**一个** `BEGIN IMMEDIATE` 事务：幂等校验、建台账、逐条执行迁移、「只建声明表」校验、写幂等结果全在同一事务里。任何一步失败整体回滚，库里一张表都不留——半途失败不留半张表。
-- 项目隔离：`project_id` 必填；台账每行带 `project_id`，只读本项目记录。库里若已有别家项目的迁移记录，直接 `PROJECT_SCOPE_VIOLATION`，读不到也写不进。项目归属校验排在幂等重放之前——换项目的请求先撞作用域，不会先拿到别人记下的结果。
+- 项目隔离：`project_id` 必填；台账每行带 `project_id`，只读本项目记录。整个库归**第一个用它的项目**独占：首次使用即写入 `migration_project`，之后别家项目再用同一个库一律 `PROJECT_SCOPE_VIOLATION`——零迁移的首跑也会落绑定，不存在「空台账放行」的空档。项目归属校验排在幂等重放之前：换项目的请求先撞作用域，不会先拿到别人记下的结果。
 - 幂等：同 actor、同 key、同请求返回首次结果；同 key 换请求内容判 `IDEMPOTENCY_KEY_REUSE`。幂等读写在事务内，多线程同键并发时排队等锁，全部拿到首次结果。
 - 并发：连接用 `busy_timeout=10s`；并发首建同一个库、切换 WAL 需要独占锁，失败时按 20 次 × 50ms 重试，不把同伴顶掉。
 - 语句按完整语句切分，用 `sqlite3.complete_statement` 逐字符判断边界：字符串与注释里的分号不算分隔，同一行写两条语句也能拆开。最后一条语句后的整行注释不算残留语句。
@@ -105,7 +105,7 @@ cd sqlite_migration && ../.venv/bin/python -m pytest 后端代码/tests -q
 .venv/bin/python .agents/gate.py sqlite_migration/ --spec specs/2026-11-01-writing-harness-mcp.spec.md
 ```
 
-末行必须是 `GATE PASS`。当前实测：`GATE PASS`，覆盖率 96.8%。
+末行必须是 `GATE PASS`。当前实测：`GATE PASS`，覆盖率 ≥96.7%（多次实跑区间 96.7–98.0%，并发用例的线程交错会影响分支覆盖）。
 
 手动冒烟（在仓库根跑）：
 

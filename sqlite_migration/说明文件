@@ -9,7 +9,7 @@ sqlite_migration/
 │   ├── 实现/
 │   │   └── sqlite_migration.py    读声明、顺序执行、单事务、项目隔离、幂等台账
 │   └── tests/
-│       └── test_sqlite_migration.py  同步测试：正常 / 失败 / 越权，54 条
+│       └── test_sqlite_migration.py  同步测试：正常 / 失败 / 越权，57 条
 ├── 资料文档/
 │   └── START.md                  接手 AI 的入口：阶段、规则、复现命令
 └── 说明文件                       本文件：给人看的单页说明
@@ -33,9 +33,9 @@ CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT);
 | 保证 | 做法 |
 |---|---|
 | 重复执行幂等 | 已执行版本记在 `schema_migrations`，只跑没跑过的；同 actor 同 key 同请求返回首次结果 |
-| 只建声明表 | 提交前比对 `sqlite_master`，出现未声明的表即判失败并整体回滚 |
+| 只建声明表 | 提交前比对「执行后新增的表」与「本次声明的表」，多建即判失败并整体回滚；库里原有表（别家模块的）不算越界 |
 | 失败回滚 | 一次 `run` 一个 `BEGIN IMMEDIATE` 事务：幂等校验、建台账、执行迁移、校验表、写幂等结果全在里面；任一步失败整库回滚，不留半张表 |
-| 项目隔离 | 台账每行带 `project_id`，只读写本项目；库里已有别家项目记录即 `PROJECT_SCOPE_VIOLATION` |
+| 项目隔离 | 台账每行带 `project_id`，只读写本项目；库归首个使用的项目独占（`migration_project` 单行落绑定，零迁移首跑也绑），别家项目一律 `PROJECT_SCOPE_VIOLATION` |
 
 历史迁移文件不可改写：执行过的文件内容一变（checksum 不符）就判 `CONFLICT`，改行为要加新文件。
 
@@ -43,10 +43,11 @@ CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT);
 
 | 表 | 内容 |
 |---|---|
+| `migration_project` | project_id（主键）——库的项目归属，首次使用即写入 |
 | `schema_migrations` | project_id、version、module、seq、name、checksum、applied_at（主键 `(project_id, version)`） |
-| `migration_requests` | actor_id、key、request_hash、result、recorded_at |
+| `migration_requests` | project_id、actor_id、key、request_hash、result、recorded_at（主键 `(project_id, actor_id, key)`） |
 
-这两张表归本模块所有，不是业务表。
+这三张表归本模块所有，不是业务表。
 
 ## 验收
 
@@ -54,6 +55,6 @@ CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT);
 .venv/bin/python .agents/gate.py sqlite_migration/ --spec specs/2026-11-01-writing-harness-mcp.spec.md
 ```
 
-末行 `GATE PASS`；当前实测覆盖率 96.8%。
+末行 `GATE PASS`；当前实测覆盖率 ≥96.7%（多次实跑区间 96.7–98.0%）。
 
 条款出处：`specs/2026-11-01-writing-harness-mcp.spec.md` 要求 R1、R14；字段出处：同目录接口总表第一节。
