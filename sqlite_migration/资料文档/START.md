@@ -30,7 +30,7 @@ sqlite_migration/
 │   ├── 实现/
 │   │   └── sqlite_migration.py    唯一职责：读迁移声明、顺序执行、事务回滚、幂等台账
 │   └── tests/
-│       └── test_sqlite_migration.py  正常 / 失败 / 越权 57 条
+│       └── test_sqlite_migration.py  正常 / 失败 / 越权 60 条
 ├── 资料文档/
 │   └── START.md                  本文件
 └── 说明文件                       给人看的单页说明
@@ -68,9 +68,9 @@ sqlite_migration/
 |---|---|
 | `MIGRATION_ORDER_CONFLICT` | 同一模块顺序号不连续；新迁移排到已执行迁移之前；已执行数多于声明数 |
 | `CONFLICT` | 已执行迁移的文件内容被改动（checksum 不符） |
-| `MIGRATION_FAILED` | 语句执行失败；文件名不合规；建了未声明表；声明为空；末尾有不完整语句；迁移文件自带 `BEGIN`/`COMMIT` 等事务控制语句；库打不开 |
+| `MIGRATION_FAILED` | 语句执行失败；文件名不合规；建了未声明表；`-- tables:` 声明为空；末尾有不完整语句；迁移文件自带 `BEGIN`/`COMMIT` 等事务控制语句；库打不开 |
 | `MIGRATIONS_ROOT_MISSING` | 迁移根不是目录 |
-| `PROJECT_SCOPE_VIOLATION` | 路径为相对或含 `..`；迁移文件真实路径落到迁移根之外；缺项目作用域；库里已有别家项目的迁移记录 |
+| `PROJECT_SCOPE_VIOLATION` | 路径为相对或含 `..`；迁移文件真实路径落到迁移根之外；缺项目作用域；库已归别家项目独占（`migration_project` 绑定，含绑定缺失时按已执行迁移回推的归属） |
 | `IDEMPOTENCY_KEY_REUSE` | 同 actor、同 key、不同请求 |
 | `INVALID_PAYLOAD` | 必填字段缺失、类型不对、路径非绝对 |
 

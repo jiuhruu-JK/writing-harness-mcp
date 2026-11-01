@@ -42,7 +42,7 @@ BOOKKEEPING_DDL = (
 
 FILE = re.compile(r"^(?P<seq>[0-9]+)_(?P<slug>[^/\\]+)\.sql$")
 CONTROL = re.compile(r"^(BEGIN|COMMIT|ROLLBACK|END|SAVEPOINT|RELEASE)\b", re.I)
-TABLES = re.compile(r"^--\s*tables\s*:\s*(?P<list>.*)$", re.M)
+TABLES = re.compile(r"^--[ \t]*tables[ \t]*:[ \t]*(?P<list>[^\n]*)$", re.M)
 
 
 class SqliteMigrationError(Exception):
@@ -62,8 +62,7 @@ def migrate(request: dict) -> dict:
     if not (project := str(request["project_id"]).strip()):
         raise SqliteMigrationError(SCOPE, "迁移必须带项目作用域", {"project_id": ""})
     actor_id, key = request["actor"]["actor_id"], request["idempotency_key"]
-    fingerprint = _fingerprint(request)
-
+    fingerprint, connection = _fingerprint(request), None
     connection = _connect(database)
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -74,13 +73,13 @@ def migrate(request: dict) -> dict:
                               fingerprint)) is not None:
             connection.execute("COMMIT")  # 同键同请求：先提交再返回，锁立刻释放
             return replay
-        plan, before = _plan(root), _tables(connection)  # 本次执行前整库已有表，别家模块的不算越界
+        plan, before = _plan(root), _tables(connection)  # 执行前的表：别家模块建的
         _apply(connection, plan, applied, project)
         if len(applied) < len(plan):
             _verify_tables(connection, plan, before)
         versions = [r["version"] for r in _applied(connection, project)]
-        result = {"applied_versions": versions, "current_version": versions[-1]
-                  if versions else 0}
+        result = {"applied_versions": versions,
+                  "current_version": versions[-1] if versions else 0}
         _remember(connection, project, actor_id, key, fingerprint, result)
         connection.execute("COMMIT")
         return result
@@ -91,8 +90,8 @@ def migrate(request: dict) -> dict:
             pass
         if isinstance(exc, SqliteMigrationError):
             raise
-        raise SqliteMigrationError(
-            FAILED, "迁移执行失败", {"reason": str(exc)}) from exc
+        raise SqliteMigrationError(FAILED, "迁移执行失败",
+                                   {"reason": str(exc)}) from exc
     finally:
         connection.close()
 
@@ -100,7 +99,7 @@ def migrate(request: dict) -> dict:
 def _scope_path(raw: str, field: str) -> Path:
     """数据库与迁移根都必须是真实绝对路径；相对路径和目录穿越一律拒绝。"""
     if not os.path.isabs(text := str(raw).strip()) or ".." in Path(text).parts:
-        raise SqliteMigrationError(SCOPE, "路径必须是绝对路径且不含目录穿越",
+        raise SqliteMigrationError(SCOPE, "路径须为绝对路径且不含目录穿越",
                                    {"field": field, "path": text})
     return Path(os.path.realpath(text))
 
@@ -112,11 +111,10 @@ def _connect(database: Path) -> sqlite3.Connection:
         connection = sqlite3.connect(str(database), isolation_level=None,
                                      timeout=BUSY_TIMEOUT)
         _pragmas(connection)
+        return connection
     except (OSError, sqlite3.Error) as exc:
-        raise SqliteMigrationError(FAILED, "数据库打不开",
-                                   {"database_path": str(database),
-                                    "reason": str(exc)}) from exc
-    return connection
+        raise SqliteMigrationError(FAILED, "数据库打不开", {
+            "database_path": str(database), "reason": str(exc)}) from exc
 
 
 def _pragmas(connection: sqlite3.Connection) -> None:
@@ -131,34 +129,40 @@ def _pragmas(connection: sqlite3.Connection) -> None:
                 raise
             time.sleep(PRAGMA_BACKOFF)
 
+
 def _ensure_bookkeeping(connection: sqlite3.Connection) -> None:
     """本模块自己的台账：项目绑定、已执行迁移、幂等请求。"""
     for ddl in BOOKKEEPING_DDL:
         connection.execute(ddl)
+    if "project_id" not in {r[1] for r in connection.execute(
+            f"PRAGMA table_info({REQUEST_TABLE})")}:  # 旧结构无项目列，重建
+        connection.execute(f"DROP TABLE {REQUEST_TABLE}")
+        connection.execute(BOOKKEEPING_DDL[2])
 
 
 def _guard_project(connection: sqlite3.Connection, project: str) -> None:
-    """库归第一个用它的项目独占：零迁移首跑也落绑定，别家项目一律越权。"""
-    if (row := connection.execute(
-            f"SELECT project_id FROM {PROJECT_TABLE}").fetchone()) is None:
+    """库归首个使用它的项目独占：零迁移首跑也落绑定，别家项目一律越权。"""
+    who = (connection.execute(f"SELECT project_id FROM {PROJECT_TABLE}").fetchone()
+           or connection.execute(f"SELECT project_id FROM {VERSION_TABLE} LIMIT 1")
+           .fetchone())  # 绑定缺失时按已执行迁移回推归属，别让人凭空接管
+    if who is None:
         connection.execute(f"INSERT INTO {PROJECT_TABLE} (project_id) VALUES (?)",
                            (project,))
-    elif row[0] != project:
-        raise SqliteMigrationError(SCOPE, "数据库已归另一个项目使用",
-                                   {"project_id": project, "other_project_ids": [row[0]]})
+    elif who[0] != project:
+        raise SqliteMigrationError(
+            SCOPE, "数据库已归另一个项目使用",
+            {"project_id": project, "other_project_ids": [who[0]]})
 
 
 def _applied(connection: sqlite3.Connection, project: str) -> list[dict]:
     """只读本项目的迁移记录，按版本升序。"""
     keys = ("version", "module", "seq", "name", "checksum")
-    rows = connection.execute(
+    return [dict(zip(keys, r)) for r in connection.execute(
         f"SELECT {', '.join(keys)} FROM {VERSION_TABLE} WHERE project_id = ?"
-        " ORDER BY version", (project,))
-    return [dict(zip(keys, row)) for row in rows]
+        " ORDER BY version", (project,))]
 
 
-def _replay(connection: sqlite3.Connection, project: str, actor_id: str,
-            key: str, fingerprint: str) -> dict | None:
+def _replay(connection: sqlite3.Connection, project: str, actor_id: str, key: str, fingerprint: str) -> dict | None:
     """同项目、同 actor、同 key、同请求返回首次结果；同键异请求判复用错误。"""
     row = connection.execute(
         f"SELECT request_hash, result FROM {REQUEST_TABLE} WHERE project_id = ?"
@@ -171,8 +175,7 @@ def _replay(connection: sqlite3.Connection, project: str, actor_id: str,
     return json.loads(row[1])
 
 
-def _remember(connection: sqlite3.Connection, project: str, actor_id: str,
-              key: str, fingerprint: str, result: dict) -> None:
+def _remember(connection: sqlite3.Connection, project: str, actor_id: str, key: str, fingerprint: str, result: dict) -> None:
     connection.execute(
         f"INSERT INTO {REQUEST_TABLE} (project_id, actor_id, key, request_hash,"
         " result, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -192,8 +195,7 @@ def _plan(root: Path) -> list[dict]:
                            if p.is_file() and p.suffix.lower() == SUFFIX):
             if (match := FILE.match(path.name)) is None:
                 raise SqliteMigrationError(
-                    FAILED, "迁移文件名不合 `<顺序号>_<名字>.sql`",
-                    {"path": str(path)})
+                    FAILED, "迁移文件名不合 `<顺序号>_<名字>.sql`", {"path": str(path)})
             if not Path(os.path.realpath(path)).is_relative_to(root):
                 raise SqliteMigrationError(SCOPE, "迁移文件指到迁移根之外",
                                            {"path": str(path)})
@@ -218,20 +220,19 @@ def _declared(text: str, path: Path) -> list[str]:
     raise SqliteMigrationError(FAILED, "`-- tables:` 声明为空", {"path": str(path)})
 
 
-def _apply(connection: sqlite3.Connection, plan: list[dict],
-           applied: list[dict], project: str) -> None:
+def _apply(connection: sqlite3.Connection, plan: list[dict], applied: list[dict], project: str) -> None:
     """校验已执行前缀后，逐条执行未应用的迁移并记账；失败由外层整体回滚。"""
     if len(applied) > len(plan):
         raise SqliteMigrationError(ORDER, "已执行的迁移在声明里找不到",
                                    {"applied": len(applied), "declared": len(plan)})
     for index, entry in enumerate(plan):
         if index < len(applied):
-            row, ident = applied[index], (entry["module"], entry["seq"], entry["name"])
-            if (row["module"], row["seq"], row["name"]) != ident:
+            row = applied[index]
+            if (row["module"], row["seq"], row["name"]) != (
+                    entry["module"], entry["seq"], entry["name"]):
                 raise SqliteMigrationError(
-                    ORDER, "新迁移插到了已执行迁移之前",
-                    {"version": row["version"], "applied": row["name"],
-                     "declared": entry["name"]})
+                    ORDER, "新迁移插到了已执行迁移之前", {"version": row["version"],
+                    "applied": row["name"], "declared": entry["name"]})
             if row["checksum"] != entry["checksum"]:
                 raise SqliteMigrationError(CONFLICT, "已执行的迁移文件内容被改动",
                                            {"module": row["module"],
@@ -241,9 +242,9 @@ def _apply(connection: sqlite3.Connection, plan: list[dict],
             for statement in _statements(entry["text"]):
                 connection.execute(statement)
         except sqlite3.Error as exc:
-            raise SqliteMigrationError(FAILED, "迁移语句执行失败",
-                                       {"name": entry["name"], "module":
-                                        entry["module"], "reason": str(exc)}) from exc
+            raise SqliteMigrationError(
+                FAILED, "迁移语句执行失败", {"name": entry["name"], "reason": str(exc),
+                "module": entry["module"]}) from exc
         connection.execute(
             f"INSERT INTO {VERSION_TABLE} (project_id, version, module, seq, name,"
             " checksum, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -261,7 +262,7 @@ def _statements(text: str) -> list[str]:
             if buffer.strip() != ";":
                 statements.append(buffer)
             buffer = ""
-    if code := _first_code(buffer):
+    if code := _first_code(buffer):  # 末尾残留语句不算整条，判不完整
         raise SqliteMigrationError(FAILED, "迁移文件末尾有不完整语句",
                                    {"tail": code[:80]})
     for statement in statements:
@@ -272,7 +273,7 @@ def _statements(text: str) -> list[str]:
 
 
 def _first_code(block: str) -> str:
-    """一段 SQL 的第一条非注释语句；头注释不会被当成语句。"""
+    """一段 SQL 的第一条非注释语句；头注释不当语句。"""
     return next((s.strip() for s in block.splitlines()
                  if s.strip() and not s.strip().startswith("--")), "")
 
@@ -280,15 +281,14 @@ def _first_code(block: str) -> str:
 def _tables(connection: sqlite3.Connection) -> set[str]:
     """整库现有表名，不含 sqlite 内部表。"""
     return {r[0] for r in connection.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name"
-        " NOT LIKE 'sqlite_%'")}
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE"
+        " 'sqlite_%'")}
 
 
-def _verify_tables(connection: sqlite3.Connection, plan: list[dict],
-                   before: set[str]) -> None:
+def _verify_tables(connection: sqlite3.Connection, plan: list[dict], before: set[str]) -> None:
     """只许创建本次声明的表：按执行前后差集判，别家模块的表不算越界。"""
-    if extra := sorted((_tables(connection) - before)
-                       - set(BOOKKEEPING).union(*(e["tables"] for e in plan))):
+    declared = set(BOOKKEEPING).union(*(e["tables"] for e in plan))
+    if extra := sorted((_tables(connection) - before) - declared):
         raise SqliteMigrationError(FAILED, "迁移建了未声明的表",
                                    {"undeclared_tables": extra})
 

@@ -724,3 +724,53 @@ def test_idempotency_row_carries_project(tmp_path: Path) -> None:
     finally:
         connection.close()
     assert rows == [("proj-1", "key-1")]
+
+
+def test_empty_tables_header_does_not_swallow_next_line(tmp_path: Path) -> None:
+    """空声明头不得跨行吃掉下一条语句：`-- tables:` 后紧跟 SELECT 仍算声明为空。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    path = root / "alpha" / "1_blank.sql"
+    path.parent.mkdir(parents=True)
+    path.write_text("-- tables:   \nSELECT 1;\n", encoding="utf-8")
+    result = run(payload(database, root))
+    assert result["error"]["code"] == "MIGRATION_FAILED"
+    assert result["error"]["details"]["path"].endswith("1_blank.sql")
+
+
+def test_legacy_bookkeeping_is_upgraded(tmp_path: Path) -> None:
+    """旧结构（幂等表无 project_id）的库能被新版接管并继续用，不报缺列。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    write_module(root, "alpha", 1, "first", ["documents"])
+    connection = sqlite3.connect(str(database))
+    try:
+        connection.execute(
+            "CREATE TABLE migration_requests (actor_id TEXT NOT NULL, key TEXT"
+            " NOT NULL, request_hash TEXT NOT NULL, result TEXT NOT NULL,"
+            " recorded_at TEXT NOT NULL, PRIMARY KEY (actor_id, key))")
+        connection.commit()
+    finally:
+        connection.close()
+    result = run(payload(database, root))
+    assert result["ok"] is True, result
+    assert result["data"] == {"applied_versions": [1], "current_version": 1}
+
+
+def test_missing_binding_does_not_let_other_project_take_over(
+        tmp_path: Path) -> None:
+    """绑定表缺失时按已执行迁移回推归属：别家项目不能凭空白绑定接管。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    write_module(root, "alpha", 1, "first", ["documents"])
+    run(payload(database, root))
+    connection = sqlite3.connect(str(database))
+    try:
+        connection.execute("DROP TABLE migration_project")
+        connection.commit()
+    finally:
+        connection.close()
+    result = run(payload(database, root, project_id="proj-2",
+                         idempotency_key="key-2"))
+    assert result["error"]["code"] == "PROJECT_SCOPE_VIOLATION"
+    assert result["error"]["details"]["other_project_ids"] == ["proj-1"]
