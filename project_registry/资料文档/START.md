@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-已实现并通过门禁，等待验收。模块内已有 `命令.py`、`实现/project_registry.py`、`tests/test_project_registry.py` 三份代码与本文档。
+已实现、通过门禁并经子代理验收（三轮复查通过，遗留项 0），等待用户审核。模块内已有 `命令.py`、`实现/project_registry.py`、`tests/test_project_registry.py` 三份代码与本文档。
 
 阶段判定：跑完成后判据那一节，末行是 `GATE PASS` 即「已过门禁」，是 `GATE FAIL` 即「未过」。
 
