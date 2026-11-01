@@ -9,7 +9,7 @@ project_registry/
 │   ├── 实现/
 │   │   └── project_registry.py    登记、打开、作用域强制、路径逃逸拒绝
 │   └── tests/
-│       └── test_project_registry.py  同步测试：正常 / 失败 / 越权，50 条
+│       └── test_project_registry.py  同步测试：正常 / 失败 / 越权，53 条
 ├── 资料文档/
 │   └── START.md                  接手 AI 的入口：阶段、规则、复现命令
 └── 说明文件                       本文件：给人看的单页说明
@@ -37,7 +37,8 @@ project_registry/
 - 同一数据根换名字登记 → `CONFLICT`
 - 同一幂等键换请求内容 → `IDEMPOTENCY_KEY_REUSE`
 - 没登记就打开 → `PROJECT_NOT_REGISTERED`
-- 已登记项目根内的子目录再登记成第二个项目 → `CONFLICT`
+- 项目根套娃（落在已登记根内、或根里已有已登记根）→ `CONFLICT`
+- 项目内路径指向 `.writing-harness/`（含符号链接）→ `PROJECT_SCOPE_VIOLATION`
 - 读操作不带项目身份、或带的是别家身份 → `PROJECT_SCOPE_VIOLATION`
 
 ## 数据落盘

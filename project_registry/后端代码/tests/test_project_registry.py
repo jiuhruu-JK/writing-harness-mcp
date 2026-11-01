@@ -459,3 +459,36 @@ def test_rollback_swallows_sqlite_error(root: Path) -> None:
             raise sqlite3.OperationalError("no transaction is active")
 
     assert 命令._IMPL._safe_rollback(Broken()) is None
+
+
+def test_outer_root_cannot_contain_registered_project(tmp_path: Path) -> None:
+    """反序嵌套：先登记内层，再把外层登记成第二个项目也要拒。"""
+    outer = tmp_path / "外层"
+    inner = outer / "内2"
+    inner.mkdir(parents=True)
+    registered(payload("register", inner, name="内2"))
+    result = run(payload("register", outer, name="外", idempotency_key="key-2"))
+    assert result["ok"] is False
+    assert result["error"]["code"] == "CONFLICT"
+    assert result["error"]["details"]["nested_root"] == str(inner)
+
+
+def test_symlink_to_registry_dir_rejected(root: Path) -> None:
+    """绕字面不行：符号链接指向登记目录同样拒绝。"""
+    data = registered(payload("register", root, name="长夜"))
+    os.symlink(root / REGISTRY_DIR, root / "影")
+    result = run(read_payload("resolve", root, name=f"影/{DB_FILE}",
+                              project_id=data["project_id"]))
+    assert result["ok"] is False
+    assert result["error"]["code"] == "PROJECT_SCOPE_VIOLATION"
+
+
+def test_existing_root_second_key_is_recorded(root: Path) -> None:
+    """已登记根分支也写台账：同键换请求内容必被拒，不会静默通过。"""
+    registered(payload("register", root, name="长夜"))
+    assert run(payload("register", root, name="长夜",
+                       idempotency_key="key-2"))["ok"] is True
+    # 同 actor、同 key、换项目名 = 不同请求 → 复用判据先命中
+    other = run(payload("register", root, name="另一本", idempotency_key="key-2"))
+    assert other["ok"] is False
+    assert other["error"]["code"] == "IDEMPOTENCY_KEY_REUSE"

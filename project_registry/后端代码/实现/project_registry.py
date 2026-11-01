@@ -20,20 +20,17 @@ DB_FILE = "registry.db"
 
 COLUMNS = "project_id, name, root_path, schema_version, registered_at"
 SCHEMA = (
-    "CREATE TABLE IF NOT EXISTS projects (project_id TEXT PRIMARY KEY,"
-    " name TEXT NOT NULL, root_path TEXT NOT NULL UNIQUE,"
-    " schema_version INTEGER NOT NULL, registered_at TEXT NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS idempotency (actor_id TEXT NOT NULL,"
-    " key TEXT NOT NULL, request_hash TEXT NOT NULL, result TEXT NOT NULL,"
+    "CREATE TABLE IF NOT EXISTS projects (project_id TEXT PRIMARY KEY, name TEXT"
+    " NOT NULL, root_path TEXT NOT NULL UNIQUE, schema_version INTEGER NOT NULL,"
+    " registered_at TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS idempotency (actor_id TEXT NOT NULL, key TEXT"
+    " NOT NULL, request_hash TEXT NOT NULL, result TEXT NOT NULL,"
     " PRIMARY KEY (actor_id, key))")
 
-SCOPE = "PROJECT_SCOPE_VIOLATION"
-CONFLICT = "CONFLICT"
-REUSE = "IDEMPOTENCY_KEY_REUSE"
-NOT_REGISTERED = "PROJECT_NOT_REGISTERED"
-CORRUPT = "PROJECT_REGISTRY_CORRUPT"
+SCOPE, CONFLICT = "PROJECT_SCOPE_VIOLATION", "CONFLICT"
+REUSE, INVALID = "IDEMPOTENCY_KEY_REUSE", "INVALID_PAYLOAD"
+NOT_REGISTERED, CORRUPT = "PROJECT_NOT_REGISTERED", "PROJECT_REGISTRY_CORRUPT"
 STORE_IO = "PROJECT_STORE_IO_ERROR"
-INVALID = "INVALID_PAYLOAD"
 
 
 class ProjectRegistryError(Exception):
@@ -69,8 +66,8 @@ def register(request: dict) -> dict:
         conn.close()
 
 
-def _register_in_txn(conn: sqlite3.Connection, root: Path, name: str,
-                     scope: str, request: dict) -> dict:
+def _register_in_txn(conn: sqlite3.Connection, root: Path, name: str, scope: str,
+                     request: dict) -> dict:
     """幂等校验与登记约束在同一个 SQLite 事务内完成。"""
     actor_id = request["actor"]["actor_id"]
     key = request["idempotency_key"]
@@ -91,8 +88,10 @@ def _register_in_txn(conn: sqlite3.Connection, root: Path, name: str,
                 CONFLICT, "同一数据根已登记为另一个项目",
                 {"root_path": str(root), "registered_name": row["name"],
                  "name": name})
+        data = _data(row)
+        _remember(conn, actor_id, key, fingerprint, data)
         conn.execute("COMMIT")
-        return _data(row)
+        return data
     if scope:
         raise ProjectRegistryError(
             SCOPE, "登记新项目时不得声明既有项目身份", {"project_id": scope})
@@ -117,33 +116,31 @@ def open_project(request: dict) -> dict:
 
 def resolve(request: dict) -> dict:
     """校验根内相对路径不越出数据根；越界一律拒绝（R1 路径逃逸）。"""
-    return _read_guarded(
-        lambda root, row: (_resolve_within(root, request.get("name") or ""),
-                           _data(row))[1], request)
+    return _read_guarded(lambda root, row: _resolve_within(root, request.get("name") or "")
+                         and _data(row), request)
 
 
 def _read_guarded(action, request: dict) -> dict:
     """读路径统一骨架：规范根 → 打开既有库 → 校验作用域 → 交给 action。"""
-    root = _scope_root(request["root_path"])
-    conn = _connect_read(root)
+    root, conn = _scope_root(request["root_path"]), None
     try:
+        conn = _connect_read(root)
         row = _require_row(conn, root)
         _guard_scope(request.get("project_id") or "", row)
         return action(root, row)
     except sqlite3.Error as exc:
-        raise ProjectRegistryError(
-            STORE_IO, "登记档案读不了",
-            {"root_path": str(root), "reason": str(exc)}) from exc
+        raise ProjectRegistryError(STORE_IO, "登记档案读不了",
+                                   {"root_path": str(root), "reason": str(exc)}) from exc
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def _guard_scope(scope: str, row: dict) -> None:
     """读取必须带本项目作用域；缺作用域或身份不符一律拒绝。"""
     if not scope:
-        raise ProjectRegistryError(
-            SCOPE, "读取项目记录必须带项目作用域",
-            {"registered_project_id": row["project_id"]})
+        raise ProjectRegistryError(SCOPE, "读取项目记录必须带项目作用域",
+                                   {"registered_project_id": row["project_id"]})
     if scope != row["project_id"]:
         raise ProjectRegistryError(
             SCOPE, "请求的项目作用域与登记身份不一致",
@@ -151,12 +148,19 @@ def _guard_scope(scope: str, row: dict) -> None:
 
 
 def _guard_nested_root(root: Path) -> None:
-    """已登记项目根内的目录不能再登记为第二个项目。"""
+    """项目根不许套娃：不能落在已登记根之内，也不能已套着别的已登记根。"""
     for parent in root.parents:
         if _db_path(parent).exists():
             raise ProjectRegistryError(
                 CONFLICT, "已登记项目根内的目录不能成为第二个项目",
                 {"root_path": str(root), "registered_root": str(parent)})
+    own, hits = _db_path(root), (root.rglob(f"{REGISTRY_DIR}/{DB_FILE}")
+                                 if root.exists() else ())
+    for db in hits:
+        if db != own:
+            raise ProjectRegistryError(
+                CONFLICT, "要登记的根里已经套着另一个已登记项目",
+                {"root_path": str(root), "nested_root": str(db.parent.parent)})
 
 
 def _scope_root(raw: str) -> Path:
@@ -177,11 +181,12 @@ def _resolve_within(root: Path, raw: str) -> Path:
     if os.path.isabs(text) or ".." in Path(text).parts:
         raise ProjectRegistryError(
             SCOPE, "项目内路径不得为绝对路径或含目录穿越", {"name": text})
-    if Path(os.path.normpath(text)).parts[0] == REGISTRY_DIR:
-        raise ProjectRegistryError(
-            SCOPE, "项目内路径不得指向模块自有登记目录", {"name": text})
     candidate = Path(os.path.normpath(os.path.join(str(root), text)))
     real = Path(os.path.realpath(candidate))
+    registry = _db_path(root).parent
+    if registry in (real, *real.parents) or registry in (candidate, *candidate.parents):
+        raise ProjectRegistryError(
+            SCOPE, "项目内路径不得指向模块自有登记目录", {"name": text})
     if not candidate.is_relative_to(root) or not real.is_relative_to(root):
         raise ProjectRegistryError(
             SCOPE, "路径指到项目数据根之外",
@@ -210,16 +215,14 @@ def _connect(root: Path) -> sqlite3.Connection:
 
 def _connect_read(root: Path) -> sqlite3.Connection:
     """打开既有登记库；根未登记即报错，读路径用它。"""
-    path = _db_path(root)
-    if not path.exists():
-        raise ProjectRegistryError(
-            NOT_REGISTERED, "数据根尚未登记项目", {"root_path": str(root)})
+    if not (path := _db_path(root)).exists():
+        raise ProjectRegistryError(NOT_REGISTERED, "数据根尚未登记项目",
+                                   {"root_path": str(root)})
     try:
         return sqlite3.connect(str(path), isolation_level=None)
     except sqlite3.Error as exc:
-        raise ProjectRegistryError(
-            STORE_IO, "登记库打不开",
-            {"root_path": str(root), "reason": str(exc)}) from exc
+        raise ProjectRegistryError(STORE_IO, "登记库打不开",
+                                   {"root_path": str(root), "reason": str(exc)}) from exc
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -239,10 +242,9 @@ def _row_by_root(conn: sqlite3.Connection, root: Path) -> dict | None:
 
 
 def _require_row(conn: sqlite3.Connection, root: Path) -> dict:
-    row = _row_by_root(conn, root)
-    if row is None:
-        raise ProjectRegistryError(
-            NOT_REGISTERED, "数据根尚未登记项目", {"root_path": str(root)})
+    if (row := _row_by_root(conn, root)) is None:
+        raise ProjectRegistryError(NOT_REGISTERED, "数据根尚未登记项目",
+                                   {"root_path": str(root)})
     return row
 
 
@@ -290,11 +292,9 @@ def _fingerprint(request: dict) -> str:
 
 def _data(record: dict) -> dict:
     """接口总表规定返回三键：project_id、schema_version、data_root。"""
-    root = Path(record["root_path"])
     return {"project_id": record["project_id"],
             "schema_version": record["schema_version"],
             "data_root": {"root_path": record["root_path"],
-                          "state_db_path": str(_db_path(root)),
-                          "status": "registered",
-                          "name": record["name"],
+                          "state_db_path": str(_db_path(Path(record["root_path"]))),
+                          "status": "registered", "name": record["name"],
                           "registered_at": record["registered_at"]}}
