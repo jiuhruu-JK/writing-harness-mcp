@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import sqlite3
@@ -17,8 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SUFFIX = ".sql"
-VERSION_TABLE = "schema_migrations"
-REQUEST_TABLE = "migration_requests"
+VERSION_TABLE, REQUEST_TABLE = "schema_migrations", "migration_requests"
 BOOKKEEPING = (VERSION_TABLE, REQUEST_TABLE)
 
 SCOPE = "PROJECT_SCOPE_VIOLATION"
@@ -123,8 +123,6 @@ def _applied(connection: sqlite3.Connection) -> list[dict]:
 def _replay(connection: sqlite3.Connection, actor_id: str, key: str,
             fingerprint: str):
     """同 actor、同 key、同请求返回首次结果；同 key 异请求判复用错误。"""
-    import json
-
     row = connection.execute(
         f"SELECT request_hash, result FROM {REQUEST_TABLE}"
         " WHERE actor_id = ? AND key = ?", (actor_id, key)).fetchone()
@@ -139,8 +137,6 @@ def _replay(connection: sqlite3.Connection, actor_id: str, key: str,
 
 def _remember(connection: sqlite3.Connection, actor_id: str, key: str,
               fingerprint: str, result: dict) -> None:
-    import json
-
     connection.execute(
         f"INSERT INTO {REQUEST_TABLE}"
         " (actor_id, key, request_hash, result, recorded_at) VALUES (?, ?, ?, ?, ?)",
@@ -260,18 +256,24 @@ def _apply(connection: sqlite3.Connection, plan: list[dict],
 
 
 def _statements(text: str) -> list[str]:
-    """按完整语句切分：字符串与注释里的分号不算语句边界。"""
+    """按完整语句切分：字符串与注释里的分号不算语句边界。
+
+    逐字符累积，`complete_statement` 为真即切出一条——这样同一行写两条
+    语句也能分开，而不是把整行当成一条。
+    """
     statements: list[str] = []
     buffer = ""
-    for line in text.splitlines(keepends=True):
-        buffer += line
-        if sqlite3.complete_statement(buffer):
-            if buffer.strip() and buffer.strip() != ";":
+    for char in text:
+        buffer += char
+        if char == ";" and sqlite3.complete_statement(buffer):
+            if buffer.strip() != ";":
                 statements.append(buffer)
             buffer = ""
-    if buffer.strip():
+    leftover = [l.strip() for l in buffer.splitlines()
+                if l.strip() and not l.strip().startswith("--")]
+    if leftover:  # 末尾只剩空白与整行注释时不算残留语句
         raise SqliteMigrationError(
-            FAILED, "迁移文件末尾有不完整语句", {"tail": buffer.strip()[:80]})
+            FAILED, "迁移文件末尾有不完整语句", {"tail": leftover[0][:80]})
     return statements
 
 
@@ -291,8 +293,6 @@ def _verify_tables(connection: sqlite3.Connection, plan: list[dict]) -> None:
 
 def _fingerprint(request: dict) -> str:
     """请求指纹：只取影响迁移结果的字段，供幂等重放比对。"""
-    import json
-
     material = {"project_id": request.get("project_id", ""),
                 "database_path": str(request["database_path"]).strip(),
                 "migrations_root": str(request["migrations_root"]).strip()}

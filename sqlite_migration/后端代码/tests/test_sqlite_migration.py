@@ -147,6 +147,37 @@ def test_semicolon_inside_string_not_split(tmp_path: Path) -> None:
         connection.close()
 
 
+def test_two_statements_on_one_line_split(tmp_path: Path) -> None:
+    """同一行写两条语句也要拆开执行，不能整行当成一条。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    folder = root / "alpha"
+    folder.mkdir(parents=True)
+    (folder / "1_pair.sql").write_text(
+        "-- tables: first, second\n"
+        "CREATE TABLE first (id INTEGER); CREATE TABLE second (id INTEGER);\n",
+        encoding="utf-8")
+    result = run(payload(database, root))
+    assert result["ok"] is True
+    assert {"first", "second"} <= tables(database)
+
+
+def test_trailing_comment_after_last_statement_ok(tmp_path: Path) -> None:
+    """最后一条语句后的纯注释尾巴不算不完整语句。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    folder = root / "alpha"
+    folder.mkdir(parents=True)
+    (folder / "1_tail.sql").write_text(
+        "-- tables: tailed\n"
+        "CREATE TABLE tailed (id INTEGER);\n"
+        "-- 结尾注释\n",
+        encoding="utf-8")
+    result = run(payload(database, root))
+    assert result["ok"] is True
+    assert "tailed" in tables(database)
+
+
 # ---------- 失败路径 ----------
 
 def test_missing_field_rejected(tmp_path: Path) -> None:
