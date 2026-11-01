@@ -51,6 +51,8 @@ project_registry/
 | `canyon` | 检索方向上提到的同名库没有对应的 GitHub 仓库，`api.github.com/repos/canyon` 因 `owner/repo` 不成立而返回 404 | 无法登记 star/许可证等事实，不采用 |
 | `django-idempotency-key` / `drf-idempotency-key` / `idemkey` / `idemkit` | HTTP 中间件形态；`idemkey` 无 `project_urls`、仅 1 个版本、README 自述 "not yet published" 与 PyPI 已有发布自相矛盾；`idemkit` extras 极重 | 无「按项目分记 + dict 信封」形态 |
 
+另按同一标准排除：`sqlmigrate`（无对应 GitHub 仓库可核事实）、`flask-idempotent`(star 8)、`isolate`（测试期模块隔离，非路径作用域）。
+
 结论：**社区没有「单数据根登记 + 根内隔离」这个形态的成熟库**——`python project registry single root` 方向检索只得到 MCP outbox 与 FastAPI 幂等中间件。R1 的三条场景里，路径原语（不许 `..`、根外符号链接）社区与标准库都有；真正自造的只是登记簿语义（`root_path UNIQUE`、根套娃检测、`project_id` 作用域校验），这正是本项目特有需求。
 
 可以复用的部分没有自造：路径校验用标准库 `os.path.realpath` 与 `Path.is_relative_to`（`实现/project_registry.py:172`、`:185`、`:190`），比 `safe_join` 更严（我们查符号链接，它不查）。
