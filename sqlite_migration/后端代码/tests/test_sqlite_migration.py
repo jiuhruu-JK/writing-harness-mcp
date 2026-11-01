@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import sqlite3
 import threading
@@ -51,6 +52,15 @@ def write_module(root: Path, module: str, seq: int, name: str,
     path = folder / f"{seq}_{name}.sql"
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def _project_rows(database: Path) -> list[tuple]:
+    connection = sqlite3.connect(str(database))
+    try:
+        return connection.execute(
+            "SELECT project_id FROM migration_project").fetchall()
+    finally:
+        connection.close()
 
 
 def tables(database: Path) -> set[str]:
@@ -774,3 +784,42 @@ def test_missing_binding_does_not_let_other_project_take_over(
                          idempotency_key="key-2"))
     assert result["error"]["code"] == "PROJECT_SCOPE_VIOLATION"
     assert result["error"]["details"]["other_project_ids"] == ["proj-1"]
+
+
+def test_legacy_db_writes_binding_on_first_use(tmp_path: Path) -> None:
+    """旧库（台账有行、绑定表不存在）首次调用即补写绑定，独占不再只靠台账。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    path = write_module(root, "alpha", 1, "first", ["documents"])
+    text = path.read_text(encoding="utf-8")
+    checksum = hashlib.sha256(text.encode()).hexdigest()
+    connection = sqlite3.connect(str(database))
+    try:
+        connection.execute(
+            "CREATE TABLE schema_migrations (project_id TEXT NOT NULL, version"
+            " INTEGER NOT NULL, module TEXT NOT NULL, seq INTEGER NOT NULL, name"
+            " TEXT NOT NULL, checksum TEXT NOT NULL, applied_at TEXT NOT NULL,"
+            " PRIMARY KEY (project_id, version))")
+        connection.execute(
+            "INSERT INTO schema_migrations VALUES ('proj-1', 1, 'alpha', 1,"
+            " 'first', ?, '2026-11-01')", (checksum,))
+        connection.execute(
+            "CREATE TABLE migration_requests (actor_id TEXT NOT NULL, key TEXT"
+            " NOT NULL, request_hash TEXT NOT NULL, result TEXT NOT NULL,"
+            " recorded_at TEXT NOT NULL, PRIMARY KEY (actor_id, key))")
+        connection.commit()
+    finally:
+        connection.close()
+    result = run(payload(database, root))
+    assert result["ok"] is True, result
+    rows = _project_rows(database)
+    assert rows == [("proj-1",)]
+    connection = sqlite3.connect(str(database))
+    try:  # 清掉台账也不被接管：独占靠绑定表
+        connection.execute("DELETE FROM schema_migrations")
+        connection.commit()
+    finally:
+        connection.close()
+    takeover = run(payload(database, root, project_id="proj-2",
+                           idempotency_key="key-2"))
+    assert takeover["error"]["code"] == "PROJECT_SCOPE_VIOLATION"

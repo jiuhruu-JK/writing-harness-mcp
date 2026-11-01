@@ -78,9 +78,10 @@ sqlite_migration/
 
 - 台账自己建三张表：`migration_project`（库的项目归属，单行）、`schema_migrations`（按 `(project_id, version)` 记录已执行版本）与 `migration_requests`（按 `(project_id, actor_id, key)` 记幂等请求）。这三张表由本模块负责，不算业务表。
 - 一次 `run` 就是**一个** `BEGIN IMMEDIATE` 事务：幂等校验、建台账、逐条执行迁移、「只建声明表」校验、写幂等结果全在同一事务里。任何一步失败整体回滚，库里一张表都不留——半途失败不留半张表。
-- 项目隔离：`project_id` 必填；台账每行带 `project_id`，只读本项目记录。整个库归**第一个用它的项目**独占：首次使用即写入 `migration_project`，之后别家项目再用同一个库一律 `PROJECT_SCOPE_VIOLATION`——零迁移的首跑也会落绑定，不存在「空台账放行」的空档。项目归属校验排在幂等重放之前：换项目的请求先撞作用域，不会先拿到别人记下的结果。
+- 项目隔离：`project_id` 必填；台账每行带 `project_id`，只读本项目记录。整个库归**第一个用它的项目**独占：确认归属后一律补写 `migration_project`（`INSERT OR IGNORE`），之后别家项目再用同一个库一律 `PROJECT_SCOPE_VIOLATION`——零迁移的首跑也会落绑定，不存在「空台账放行」的空档。绑定表缺失时（旧库，或运维清表）按 `schema_migrations` 的既有行回推归属，回推确认后同样补写绑定，因此独占不依赖台账一直在。项目归属校验排在幂等重放之前：换项目的请求先撞作用域，不会先拿到别人记下的结果。
 - 幂等：同 actor、同 key、同请求返回首次结果；同 key 换请求内容判 `IDEMPOTENCY_KEY_REUSE`。幂等读写在事务内，多线程同键并发时排队等锁，全部拿到首次结果。
 - 并发：连接用 `busy_timeout=10s`；并发首建同一个库、切换 WAL 需要独占锁，失败时按 20 次 × 50ms 重试，不把同伴顶掉。
+- 旧库升级：`migration_requests` 若缺 `project_id` 列（早期版本的库），就地 `DROP` 后按新结构重建。**旧幂等行不搬运、直接丢弃**——旧表没有项目列，搬不出项目归属，所以升级后同一个键重试会重跑一次、不复现首次结果；已执行的迁移记录（`schema_migrations`）原样保留，不会重跑迁移。这段重建在同一个事务里，后续任何一步失败会连同重建一起回滚，旧结构原封不动。
 - 语句按完整语句切分，用 `sqlite3.complete_statement` 逐字符判断边界：字符串与注释里的分号不算分隔，同一行写两条语句也能拆开。最后一条语句后的整行注释不算残留语句。
 - 迁移文件不得自带 `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT` 等事务控制语句：整次调用已在一个事务里，自带事务会把它撑破，出现 `cannot start a transaction within a transaction`；这类文件在切分阶段就判不合规，不执行。
 - 已执行的迁移文件内容被改动即判 `CONFLICT`：历史迁移不可改写，改行为就加新文件。
@@ -105,7 +106,7 @@ cd sqlite_migration && ../.venv/bin/python -m pytest 后端代码/tests -q
 .venv/bin/python .agents/gate.py sqlite_migration/ --spec specs/2026-11-01-writing-harness-mcp.spec.md
 ```
 
-末行必须是 `GATE PASS`。当前实测：`GATE PASS`，覆盖率 ≥96.7%（多次实跑区间 96.7–98.1%，并发用例的线程交错会影响分支覆盖）。
+末行必须是 `GATE PASS`。当前实测：`GATE PASS`，覆盖率 ≥96.5%（多次实跑区间 96.5–98.1%，并发用例的线程交错会影响分支覆盖）。
 
 手动冒烟（在仓库根跑）：
 

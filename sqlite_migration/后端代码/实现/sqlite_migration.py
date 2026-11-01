@@ -145,13 +145,13 @@ def _guard_project(connection: sqlite3.Connection, project: str) -> None:
     who = (connection.execute(f"SELECT project_id FROM {PROJECT_TABLE}").fetchone()
            or connection.execute(f"SELECT project_id FROM {VERSION_TABLE} LIMIT 1")
            .fetchone())  # 绑定缺失时按已执行迁移回推归属，别让人凭空接管
-    if who is None:
-        connection.execute(f"INSERT INTO {PROJECT_TABLE} (project_id) VALUES (?)",
-                           (project,))
-    elif who[0] != project:
+    if who is not None and who[0] != project:
         raise SqliteMigrationError(
             SCOPE, "数据库已归另一个项目使用",
             {"project_id": project, "other_project_ids": [who[0]]})
+    if who is None or who[0] == project:  # 归属确认后补写绑定：旧库也要落独占
+        connection.execute(f"INSERT OR IGNORE INTO {PROJECT_TABLE} (project_id)"
+                           " VALUES (?)", (project,))
 
 
 def _applied(connection: sqlite3.Connection, project: str) -> list[dict]:
