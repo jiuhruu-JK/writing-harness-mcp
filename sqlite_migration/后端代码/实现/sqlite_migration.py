@@ -105,29 +105,23 @@ def _scope_path(raw: str, field: str) -> Path:
 
 
 def _connect(database: Path) -> sqlite3.Connection:
-    """打开库文件：WAL、外键、手动事务。"""
+    """打开库文件并设 PRAGMA：切 WAL 要独占锁，并发首建同一个库时排队重试。"""
     try:
         database.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(str(database), isolation_level=None,
                                      timeout=BUSY_TIMEOUT)
-        _pragmas(connection)
-        return connection
+        for attempt in range(PRAGMA_RETRIES + 1):
+            try:
+                for pragma in PRAGMAS:
+                    connection.execute(f"PRAGMA {pragma}")
+                return connection
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt == PRAGMA_RETRIES:
+                    raise
+                time.sleep(PRAGMA_BACKOFF)
     except (OSError, sqlite3.Error) as exc:
         raise SqliteMigrationError(FAILED, "数据库打不开", {
             "database_path": str(database), "reason": str(exc)}) from exc
-
-
-def _pragmas(connection: sqlite3.Connection) -> None:
-    """切 WAL 要独占锁：并发首建同一个库时排队重试，别把同伴顶掉。"""
-    for attempt in range(PRAGMA_RETRIES + 1):
-        try:
-            for pragma in PRAGMAS:
-                connection.execute(f"PRAGMA {pragma}")
-            return
-        except sqlite3.OperationalError as exc:
-            if "locked" not in str(exc).lower() or attempt == PRAGMA_RETRIES:
-                raise
-            time.sleep(PRAGMA_BACKOFF)
 
 
 def _ensure_bookkeeping(connection: sqlite3.Connection) -> None:
@@ -162,7 +156,8 @@ def _applied(connection: sqlite3.Connection, project: str) -> list[dict]:
         " ORDER BY version", (project,))]
 
 
-def _replay(connection: sqlite3.Connection, project: str, actor_id: str, key: str, fingerprint: str) -> dict | None:
+def _replay(connection: sqlite3.Connection, project: str, actor_id: str,
+            key: str, fingerprint: str) -> dict | None:
     """同项目、同 actor、同 key、同请求返回首次结果；同键异请求判复用错误。"""
     row = connection.execute(
         f"SELECT request_hash, result FROM {REQUEST_TABLE} WHERE project_id = ?"
@@ -175,7 +170,8 @@ def _replay(connection: sqlite3.Connection, project: str, actor_id: str, key: st
     return json.loads(row[1])
 
 
-def _remember(connection: sqlite3.Connection, project: str, actor_id: str, key: str, fingerprint: str, result: dict) -> None:
+def _remember(connection: sqlite3.Connection, project: str, actor_id: str,
+              key: str, fingerprint: str, result: dict) -> None:
     connection.execute(
         f"INSERT INTO {REQUEST_TABLE} (project_id, actor_id, key, request_hash,"
         " result, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -220,7 +216,8 @@ def _declared(text: str, path: Path) -> list[str]:
     raise SqliteMigrationError(FAILED, "`-- tables:` 声明为空", {"path": str(path)})
 
 
-def _apply(connection: sqlite3.Connection, plan: list[dict], applied: list[dict], project: str) -> None:
+def _apply(connection: sqlite3.Connection, plan: list[dict],
+           applied: list[dict], project: str) -> None:
     """校验已执行前缀后，逐条执行未应用的迁移并记账；失败由外层整体回滚。"""
     if len(applied) > len(plan):
         raise SqliteMigrationError(ORDER, "已执行的迁移在声明里找不到",
@@ -285,7 +282,8 @@ def _tables(connection: sqlite3.Connection) -> set[str]:
         " 'sqlite_%'")}
 
 
-def _verify_tables(connection: sqlite3.Connection, plan: list[dict], before: set[str]) -> None:
+def _verify_tables(connection: sqlite3.Connection, plan: list[dict],
+                   before: set[str]) -> None:
     """只许创建本次声明的表：按执行前后差集判，别家模块的表不算越界。"""
     declared = set(BOOKKEEPING).union(*(e["tables"] for e in plan))
     if extra := sorted((_tables(connection) - before) - declared):
