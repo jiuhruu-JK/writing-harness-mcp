@@ -69,11 +69,11 @@ def migrate(request: dict) -> dict:
     try:
         connection.execute("BEGIN IMMEDIATE")
         _ensure_bookkeeping(connection)
+        applied = _applied(connection, project)  # 先判项目归属，再谈幂等重放
         if (replay := _replay(connection, actor_id, key, fingerprint)) is not None:
             connection.execute("COMMIT")  # 同键同请求：先提交再返回，锁立刻释放
             return replay
         plan = _plan(root)
-        applied = _applied(connection, project)
         _guard_order(plan, applied)
         _apply(connection, plan, applied, project)
         _verify_tables(connection, plan)

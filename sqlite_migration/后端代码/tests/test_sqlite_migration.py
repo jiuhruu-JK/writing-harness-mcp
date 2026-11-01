@@ -390,10 +390,25 @@ def test_more_applied_than_declared_rejected(layout) -> None:
 
 
 def test_same_key_different_request_rejected(layout) -> None:
+    """同 actor、同键、换请求内容（换迁移根）判复用。"""
+    database, root = layout
+    run(payload(database, root))
+    other = tmp_root = root.parent / "other_migrations"
+    other.mkdir()
+    (other / "alpha").mkdir()
+    (other / "alpha" / "1_first.sql").write_text(
+        "-- tables: documents\nCREATE TABLE documents (id INTEGER);\n",
+        encoding="utf-8")
+    result = run(payload(database, other))
+    assert result["error"]["code"] == "IDEMPOTENCY_KEY_REUSE"
+
+
+def test_same_key_other_project_reports_scope(layout) -> None:
+    """同键换项目先命中的作用域校验：别家项目的库读不得。"""
     database, root = layout
     run(payload(database, root))
     result = run(payload(database, root, project_id="proj-2"))
-    assert result["error"]["code"] == "IDEMPOTENCY_KEY_REUSE"
+    assert result["error"]["code"] == "PROJECT_SCOPE_VIOLATION"
 
 
 # ---------- 越权路径 ----------
