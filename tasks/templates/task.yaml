@@ -1,0 +1,62 @@
+---
+# name: task-template
+# description: >
+#   任务卡模板。复制到 tasks/<模块名>.yaml 再逐字段填。
+#   就绪判据：.venv/bin/python .agents/gate.py <模块名>/ --spec <spec 路径>
+#   末行打印 GATE PASS。
+#   指南按规则保持抽象——本仓库的工作流文件不放示例（N4）。
+---
+
+# id — 模块名，同时也是文件名与 tasks/ 下的唯一键。
+id: <模块名>
+
+# spec — 本模块服务的 spec 路径。
+# 完成判据：该 spec 的「成熟的项目」节里，本卡 source.repo 那条判定为采用。
+spec: specs/<日期>-<短名>.spec.md
+
+# status — 状态机。合法值：draft | ready | dispatched | done | rejected。
+# 讨论过的每个模块都建卡；判「不要」的模块也建卡并置 rejected，不删档。
+status: draft
+
+# source — 本模块的上游出处。自造时整个字段写字符串 `自造`；
+# 判「不要」时本字段只作留档，内容不校验。
+# 改造时五个子键齐全：repo、pin、url、extract、lang。
+# 完成判据：门禁按 url 下载，与 pin 逐字一致，且 extract 的路径与行区间在快照里存在。
+source:
+  repo: <owner>/<repo>
+  pin: <40 位提交 sha>
+  url: https://github.com/<owner>/<repo>/archive/<pin>.tar.gz
+  extract: <上游路径:行区间>
+  lang: <Python|Rust|PHP|...>
+
+# verdict — 本模块对上游的处置。合法值：改造 | 自造 | 不要。
+# 「不要」与 `status: rejected` 互锁：判「不要」的模块照样建卡存档，不删档；
+# 置了 rejected 的卡，verdict 必须是「不要」。
+verdict: 改造
+
+# instruction — 施工说明，首行进 commit message。
+# 合法值：正向表述，写「做什么、做到什么程度算完成」。
+instruction: |
+  <按 spec 的验收条款写：本模块实现哪几条、各自做到什么程度算完成>
+
+# boundary — 本模块许可改动的全部文件，每条一行理由（单一数据源）。
+# 合法值：每条 `路径: 一行理由`。
+# 完成判据：diff 触及的每个路径都在本清单内，清单外零改动。
+boundary:
+  - "<path/to/file.py>: <为什么本模块需要改这个文件的一行理由>"
+
+# context_files — 只读参考，注入提示词供对照，门禁不检查其内容。
+context_files: []
+
+# test_files — 本模块验收条款的凭证所在。
+# 完成判据：每条验收条款都指认到这里的某个测试。
+test_files: []
+
+# test_changes — 删改测试的登记。空数组 = 零豁免。
+test_changes: []
+
+# allow_deps — 获准改动的受保护配置文件。空数组 = 零豁免。
+allow_deps: []
+
+# ai_directives — 老板口令的登记处，逐字原话，不改写不缩写。空数组 = 无口令约束。
+ai_directives: []
