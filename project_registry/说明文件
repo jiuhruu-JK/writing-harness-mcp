@@ -9,7 +9,7 @@ project_registry/
 │   ├── 实现/
 │   │   └── project_registry.py    登记、打开、作用域强制、路径逃逸拒绝
 │   └── tests/
-│       └── test_project_registry.py  同步测试：正常 / 失败 / 越权，36 条
+│       └── test_project_registry.py  同步测试：正常 / 失败 / 越权，50 条
 ├── 资料文档/
 │   └── START.md                  接手 AI 的入口：阶段、规则、复现命令
 └── 说明文件                       本文件：给人看的单页说明
@@ -28,8 +28,8 @@ project_registry/
 | action | 做什么 | 关键入参 |
 |---|---|---|
 | `register` | 登记数据根，返回项目身份 | `root_path`、`name` |
-| `open` | 打开已登记数据根 | `root_path`、`project_id`（留空=首次打开） |
-| `resolve` | 把根内相对路径解析成真实路径 | `name` 当相对路径 |
+| `open` | 打开已登记数据根 | `root_path`、`project_id`（必须与登记身份一致） |
+| `resolve` | 校验根内相对路径合法性（越界即报错） | `name` 当相对路径 |
 
 ## 拒绝什么
 
@@ -37,15 +37,18 @@ project_registry/
 - 同一数据根换名字登记 → `CONFLICT`
 - 同一幂等键换请求内容 → `IDEMPOTENCY_KEY_REUSE`
 - 没登记就打开 → `PROJECT_NOT_REGISTERED`
+- 已登记项目根内的子目录再登记成第二个项目 → `CONFLICT`
+- 读操作不带项目身份、或带的是别家身份 → `PROJECT_SCOPE_VIOLATION`
 
 ## 数据落盘
 
 ```text
-<数据根>/.writing-harness/project.json     项目身份：project_id、name、schema_version、registered_at
-<数据根>/.writing-harness/idempotency.json 幂等台账：actor_id、key、request_hash、首次结果
+<数据根>/.writing-harness/registry.db   登记库
+  ├── projects 表       项目身份：project_id、name、root_path、schema_version、registered_at
+  └── idempotency 表    幂等台账：actor_id、key、request_hash、首次结果
 ```
 
-两份文件都先写临时文件、`fsync`、再 `os.replace` 原子替换：写到一半崩掉不会留下半个档案。
+项目行与幂等台账在同一个 `BEGIN IMMEDIATE` 事务里写：写到一半崩掉整体回滚，不会出现「档案建了、台账丢了」的半个状态。
 
 ## 验收
 
@@ -53,6 +56,6 @@ project_registry/
 .venv/bin/python .agents/gate.py project_registry/ --spec specs/2026-11-01-writing-harness-mcp.spec.md
 ```
 
-末行 `GATE PASS`；当前实测覆盖率 98.1%。
+末行 `GATE PASS`；当前实测覆盖率 100.0%。
 
 条款出处：`specs/2026-11-01-writing-harness-mcp.spec.md` 要求 R1；字段出处：同目录接口总表第一节。

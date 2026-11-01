@@ -11,8 +11,8 @@ import sys
 from pathlib import Path
 
 ACTIONS = ("register", "open", "resolve")
-REQUIRED = ("request_id", "project_id", "actor", "idempotency_key", "action")
-ROOT_ACTION_NAMES = {"register": ("name",)}
+REQUIRED = ("request_id", "project_id", "actor", "action")
+WRITE_ACTIONS = ("register",)
 _IMPL_ALIAS = "writing_harness_project_registry_impl"
 
 
@@ -74,7 +74,7 @@ def _validate(payload: dict) -> None:
     if not isinstance(actor, dict) or not str(actor.get("actor_id", "")).strip():
         raise ProjectRegistryError(
             INVALID, "actor 必须带 actor_id", {"actor": actor})
-    if not str(payload["idempotency_key"]).strip():
+    if action in WRITE_ACTIONS and not str(payload.get("idempotency_key", "")).strip():
         raise ProjectRegistryError(INVALID, "写操作必须带 idempotency_key", {})
     if not isinstance(payload["request_id"], str) or not payload["request_id"].strip():
         raise ProjectRegistryError(INVALID, "request_id 不能为空", {})
@@ -83,11 +83,11 @@ def _validate(payload: dict) -> None:
     raw_root = payload.get("root_path")
     if not isinstance(raw_root, str) or not raw_root.strip():
         raise ProjectRegistryError(INVALID, "root_path 不能为空", {})
-    for key in ROOT_ACTION_NAMES.get(action, ()):
-        value = payload.get(key)
+    if action == "register":
+        value = payload.get("name")
         if not isinstance(value, str) or not value.strip():
             raise ProjectRegistryError(
-                INVALID, "缺必填业务字段", {"field": key})
+                INVALID, "缺必填业务字段", {"field": "name"})
 
 
 def _dispatch(payload: dict) -> dict:
