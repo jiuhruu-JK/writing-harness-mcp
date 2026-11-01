@@ -48,11 +48,11 @@ sqlite_migration/
 |---|---|---|
 | `alembic` 1.20.1 | `requires_dist` 含 `SQLAlchemy>=2.0`、`Mako`、`typing-extensions>=4.12`、`tomli`、`tzdata` | 引入即违反零依赖 |
 | `yoyo-migrations` 9.0.0 | `requires_dist` 含 `sqlparse`、`tabulate`、`importlib-metadata>=3.6.0` | 同上 |
-| `sqlite-utils` 4.2.1 | 依赖含 `click`、`pluggy`、`python-dateutil`、`sqlite-fts4`、`tabulate`、`pip`；`Migrations` 是 Python 函数回调 | 依赖过重且非 `.sql` 文件形态 |
+| `sqlite-utils` 4.2.1 | 依赖 7 项：`click`、`click-default-group`、`pluggy`、`python-dateutil`、`sqlite-fts4`、`tabulate`、`pip`；`Migrations` 是 Python 函数回调 | 依赖过重且非 `.sql` 文件形态 |
 | `simonw/sqlite-migrate` | README 自述 "Deprecated compatibility package"，依赖 `sqlite-utils>=4` | 已弃用 |
 | `fastmigrate` 0.5.3 | 依赖 `apswutils>=0.0.2` | 违反零依赖 |
-| `sqlstep` 0.1.0 | MIT、零依赖、0 star（建仓 2026-08-24，PyPI 仅 1 个版本） | 记录表 `version TEXT PRIMARY KEY` 无 `project_id`（做不到项目独占）；每个迁移各自一个事务（违反单事务要求）；单文件带 `-- migrate:down` 与 `no-transaction` 逃生口；无 `-- tables:` 声明头 |
-| `larzmigrate` 0.1.0 | MIT、零依赖、0 star（建仓 2026-07-26，1 个发布版本） | 记录表 `(id TEXT PRIMARY KEY, checksum TEXT)` 无 `project_id`；每迁移单独 `commit()` |
+| `sqlstep` 0.1.0 | MIT、0 star（建仓 2026-08-24，PyPI 仅 1 个版本）；零第三方**运行时**依赖（`requires_dist` 只有 `tomli; python_version < "3.11"` 与 `postgres` extra 的 `psycopg`，本项目 3.13 下不装任何第三方）；记录表见 `drivers.py:146-153` 的 `ensure_table`：`version TEXT PRIMARY KEY` | 该记录表无 `project_id`（做不到项目独占）；每个迁移各自一个事务（违反单事务要求）；单文件带 `-- migrate:down` 与 `no-transaction` 逃生口；无 `-- tables:` 声明头 |
+| `larzmigrate` 0.1.0 | MIT、零依赖（`requires_dist` 为 `None`）、0 star（建仓 2026-07-26，1 个发布版本）；记录表见 `migrate.py:77` 的 `ensure`：`(id TEXT PRIMARY KEY, checksum TEXT)` | 该记录表无 `project_id`；每迁移单独 `commit()`（`migrate.py:96-98`） |
 
 结论：**没有同时满足上述四条硬约束的成熟库**。star 超过 `source_gate.py` 的 `STAR_MIN = 1000` 的那批全部在零依赖这条上出局；零依赖又有 `.sql` 形态的那两个候选（`sqlstep`、`larzmigrate`）都缺项目隔离列且按迁移逐条提交，与 R1 和 `spec:255` 直接冲突。
 
