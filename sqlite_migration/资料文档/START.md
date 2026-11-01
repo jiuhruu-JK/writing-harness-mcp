@@ -30,7 +30,7 @@ sqlite_migration/
 │   ├── 实现/
 │   │   └── sqlite_migration.py    唯一职责：读迁移声明、顺序执行、事务回滚、幂等台账
 │   └── tests/
-│       └── test_sqlite_migration.py  正常 / 失败 / 越权 35 条
+│       └── test_sqlite_migration.py  正常 / 失败 / 越权 46 条
 ├── 资料文档/
 │   └── START.md                  本文件
 └── 说明文件                       给人看的单页说明
@@ -41,7 +41,7 @@ sqlite_migration/
 ```text
 接口：run(payload: dict) -> dict
 ├── 入参：request_id: str
-├── 入参：project_id: str
+├── 入参：project_id: str —— 项目作用域，必填；台账按项目隔离
 ├── 入参：actor: dict —— actor_id、role、client_instance_id
 ├── 入参：idempotency_key: str
 ├── 入参：database_path: str —— 库文件绝对路径
@@ -69,16 +69,17 @@ sqlite_migration/
 | `CONFLICT` | 已执行迁移的文件内容被改动（checksum 不符） |
 | `MIGRATION_FAILED` | 语句执行失败；文件名不合规；建了未声明表；声明为空；末尾有不完整语句；库打不开 |
 | `MIGRATIONS_ROOT_MISSING` | 迁移根不是目录 |
-| `MIGRATION_MODULE_MISSING` | 迁移模块目录里一个 `.sql` 都没有 |
-| `PROJECT_SCOPE_VIOLATION` | 路径为相对或含 `..`；迁移文件真实路径落到迁移根之外 |
+| `PROJECT_SCOPE_VIOLATION` | 路径为相对或含 `..`；迁移文件真实路径落到迁移根之外；缺项目作用域；库里已有别家项目的迁移记录 |
 | `IDEMPOTENCY_KEY_REUSE` | 同 actor、同 key、不同请求 |
 | `INVALID_PAYLOAD` | 必填字段缺失、类型不对、路径非绝对 |
 
 ## 规则
 
-- 台账自己建两张表：`schema_migrations`（已执行版本）与 `migration_requests`（幂等请求）。这两张表由本模块负责，不算业务表。
-- 每个迁移各开一个 `BEGIN IMMEDIATE` 事务：语句与版本记录同进同退。第 2 个迁移失败，第 1 个已执行的保留，失败的那个整体回滚——不留半张表。
-- 幂等：同 actor、同 key、同请求返回首次结果；同 key 换请求内容判 `IDEMPOTENCY_KEY_REUSE`。
+- 台账自己建两张表：`schema_migrations`（按 `(project_id, version)` 记录已执行版本）与 `migration_requests`（幂等请求）。这两张表由本模块负责，不算业务表。
+- 一次 `run` 就是**一个** `BEGIN IMMEDIATE` 事务：幂等校验、建台账、逐条执行迁移、「只建声明表」校验、写幂等结果全在同一事务里。任何一步失败整体回滚，库里一张表都不留——半途失败不留半张表。
+- 项目隔离：`project_id` 必填；台账每行带 `project_id`，只读本项目记录。库里若已有别家项目的迁移记录，直接 `PROJECT_SCOPE_VIOLATION`，读不到也写不进。
+- 幂等：同 actor、同 key、同请求返回首次结果；同 key 换请求内容判 `IDEMPOTENCY_KEY_REUSE`。幂等读写在事务内，多线程同键并发时排队等锁，全部拿到首次结果。
+- 并发：连接用 `busy_timeout=10s`；并发首建同一个库、切换 WAL 需要独占锁，失败时按 20 次 × 50ms 重试，不把同伴顶掉。
 - 语句按完整语句切分，用 `sqlite3.complete_statement` 逐字符判断边界：字符串与注释里的分号不算分隔，同一行写两条语句也能拆开。最后一条语句后的整行注释不算残留语句。
 - 已执行的迁移文件内容被改动即判 `CONFLICT`：历史迁移不可改写，改行为就加新文件。
 
@@ -102,16 +103,21 @@ cd sqlite_migration && ../.venv/bin/python -m pytest 后端代码/tests -q
 .venv/bin/python .agents/gate.py sqlite_migration/ --spec specs/2026-11-01-writing-harness-mcp.spec.md
 ```
 
-末行必须是 `GATE PASS`。当前实测：`GATE PASS`，覆盖率 97.7%。
+末行必须是 `GATE PASS`。当前实测：`GATE PASS`，覆盖率 96.7%。
 
 手动冒烟（在仓库根跑）：
 
 ```bash
 .venv/bin/python - <<'PY'
-import sqlite3, sys, tempfile
+import importlib.util, sqlite3, sys, tempfile
 from pathlib import Path
-sys.path.insert(0, "sqlite_migration/后端代码")
-from 命令 import run
+
+spec = importlib.util.spec_from_file_location(
+    "wh_cmd", "sqlite_migration/后端代码/命令.py")
+命令 = importlib.util.module_from_spec(spec)
+sys.modules["wh_cmd"] = 命令
+spec.loader.exec_module(命令)
+run = 命令.run
 
 tmp = Path(tempfile.mkdtemp())
 db, mig = tmp / "state.db", tmp / "migrations"
@@ -132,9 +138,11 @@ print(sorted(r[0] for r in sqlite3.connect(str(db)).execute(
 PY
 ```
 
+入口按文件路径装载；不要用 `sys.path.insert` + `from 命令 import run`——每个模块入口都叫 `命令.py`，同进程里会互相顶替。
+
 ## 常见改错
 
 - 在 `命令.py` 里建表或排序迁移：薄壳只校验入参与分发。
-- 一次事务跑完全部迁移：第 2 个失败会把第 1 个也回滚，违反「失败只回滚该迁移」。
+- 逐个迁移各开事务：第 2 个失败会留下第 1 个已提交的迁移，库里就出现「台账记了一条、文件其实没跑完」的错位。整次调用必须一个事务。
 - 用 `text.split(";")` 切语句：字符串和注释里的分号会切断语句。
 - 在迁移文件里建业务表但不写 `-- tables:` 头：被判「建了未声明的表」。

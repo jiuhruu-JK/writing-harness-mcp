@@ -1,15 +1,15 @@
 # sqlite_migration —— 模块自有迁移的执行器
 
-一个模块一个职责：按声明顺序执行各叶子模块自有的 SQLite 迁移，重复执行幂等、只建声明表、失败回滚。
+一个模块一个职责：按声明顺序执行各叶子模块自有的 SQLite 迁移，重复执行幂等、只建声明表、失败整体回滚、按项目隔离。
 
 ```text
 sqlite_migration/
 ├── 后端代码/
 │   ├── 命令.py                    run 薄壳：校验入参 → 调实现 → 返回 envelope
 │   ├── 实现/
-│   │   └── sqlite_migration.py    读声明、顺序执行、逐迁移事务、幂等台账
+│   │   └── sqlite_migration.py    读声明、顺序执行、单事务、项目隔离、幂等台账
 │   └── tests/
-│       └── test_sqlite_migration.py  同步测试：正常 / 失败 / 越权，35 条
+│       └── test_sqlite_migration.py  同步测试：正常 / 失败 / 越权，46 条
 ├── 资料文档/
 │   └── START.md                  接手 AI 的入口：阶段、规则、复现命令
 └── 说明文件                       本文件：给人看的单页说明
@@ -33,8 +33,9 @@ CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT);
 | 保证 | 做法 |
 |---|---|
 | 重复执行幂等 | 已执行版本记在 `schema_migrations`，只跑没跑过的；同 actor 同 key 同请求返回首次结果 |
-| 只建声明表 | 跑完比对 `sqlite_master`，出现未声明的表即判失败 |
-| 失败回滚 | 每个迁移各开一个 `BEGIN IMMEDIATE` 事务，语句与版本记录同进同退；失败那个整体回滚，已执行的保留 |
+| 只建声明表 | 提交前比对 `sqlite_master`，出现未声明的表即判失败并整体回滚 |
+| 失败回滚 | 一次 `run` 一个 `BEGIN IMMEDIATE` 事务：幂等校验、建台账、执行迁移、校验表、写幂等结果全在里面；任一步失败整库回滚，不留半张表 |
+| 项目隔离 | 台账每行带 `project_id`，只读写本项目；库里已有别家项目记录即 `PROJECT_SCOPE_VIOLATION` |
 
 历史迁移文件不可改写：执行过的文件内容一变（checksum 不符）就判 `CONFLICT`，改行为要加新文件。
 
@@ -42,7 +43,7 @@ CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT);
 
 | 表 | 内容 |
 |---|---|
-| `schema_migrations` | version、module、seq、name、checksum、applied_at |
+| `schema_migrations` | project_id、version、module、seq、name、checksum、applied_at（主键 `(project_id, version)`） |
 | `migration_requests` | actor_id、key、request_hash、result、recorded_at |
 
 这两张表归本模块所有，不是业务表。
@@ -53,6 +54,6 @@ CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT);
 .venv/bin/python .agents/gate.py sqlite_migration/ --spec specs/2026-11-01-writing-harness-mcp.spec.md
 ```
 
-末行 `GATE PASS`；当前实测覆盖率 97.7%。
+末行 `GATE PASS`；当前实测覆盖率 96.7%。
 
 条款出处：`specs/2026-11-01-writing-harness-mcp.spec.md` 要求 R1、R14；字段出处：同目录接口总表第一节。
