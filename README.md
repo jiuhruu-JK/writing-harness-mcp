@@ -47,3 +47,7 @@ work-packages/  按依赖排序的实施包
 ```
 
 最后一行必须是 `GATE PASS`。工作包总体验收见各包文档。
+
+## 许可证
+
+GNU Affero General Public License v3.0（AGPL-3.0）。完整条款见 [LICENSE](LICENSE)。
