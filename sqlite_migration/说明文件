@@ -9,7 +9,7 @@ sqlite_migration/
 │   ├── 实现/
 │   │   └── sqlite_migration.py    读声明、顺序执行、单事务、项目隔离、幂等台账
 │   └── tests/
-│       └── test_sqlite_migration.py  同步测试：正常 / 失败 / 越权，60 条
+│       └── test_sqlite_migration.py  同步测试：正常 / 失败 / 越权，61 条
 ├── 资料文档/
 │   └── START.md                  接手 AI 的入口：阶段、规则、复现命令
 └── 说明文件                       本文件：给人看的单页说明
@@ -57,6 +57,6 @@ CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT);
 .venv/bin/python .agents/gate.py sqlite_migration/ --spec specs/2026-11-01-writing-harness-mcp.spec.md
 ```
 
-末行 `GATE PASS`；当前实测覆盖率 ≥96.5%（多次实跑区间 96.5–98.1%）。
+末行 `GATE PASS`；当前实测覆盖率 ≥96.5%（多次实跑 96.5–98.1%）。
 
 条款出处：`specs/2026-11-01-writing-harness-mcp.spec.md` 要求 R1、R14；字段出处：同目录接口总表第一节。

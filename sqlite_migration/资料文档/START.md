@@ -30,7 +30,7 @@ sqlite_migration/
 │   ├── 实现/
 │   │   └── sqlite_migration.py    唯一职责：读迁移声明、顺序执行、事务回滚、幂等台账
 │   └── tests/
-│       └── test_sqlite_migration.py  正常 / 失败 / 越权 60 条
+│       └── test_sqlite_migration.py  正常 / 失败 / 越权 61 条
 ├── 资料文档/
 │   └── START.md                  本文件
 └── 说明文件                       给人看的单页说明
@@ -106,7 +106,7 @@ cd sqlite_migration && ../.venv/bin/python -m pytest 后端代码/tests -q
 .venv/bin/python .agents/gate.py sqlite_migration/ --spec specs/2026-11-01-writing-harness-mcp.spec.md
 ```
 
-末行必须是 `GATE PASS`。当前实测：`GATE PASS`，覆盖率 ≥96.5%（多次实跑区间 96.5–98.1%，并发用例的线程交错会影响分支覆盖）。
+末行必须是 `GATE PASS`。当前实测：`GATE PASS`，覆盖率 ≥96.5%（多次实跑 96.5–98.1%，并发用例的线程交错会影响分支覆盖）。
 
 手动冒烟（在仓库根跑）：
 
