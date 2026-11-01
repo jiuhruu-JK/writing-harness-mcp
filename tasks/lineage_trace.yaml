@@ -1,0 +1,25 @@
+---
+id: lineage_trace
+spec: specs/2026-11-01-writing-harness-mcp.spec.md
+status: draft
+source: 自造
+verdict: 自造
+instruction: |
+  实现`lineage_trace`且只实现这一职责：查询输出版本到输入版本、候选、范本、提示词和上下文manifest的血缘。
+  完成判据：所有来源均可定位到版本和哈希；缺失血缘明确报告；不虚构来源。
+  必须满足spec需求R3及相关通用错误、幂等、项目隔离条款；测试覆盖正常、失败和越权路径，并达到现有覆盖率门禁。
+boundary:
+  - "lineage_trace/后端代码/命令.py: 提供该模块唯一的run入口和参数校验"
+  - "lineage_trace/后端代码/实现/lineage_trace.py: 实现该模块唯一职责"
+  - "lineage_trace/后端代码/tests/test_lineage_trace.py: 验证该模块专属验收条款"
+  - "lineage_trace/资料文档/START.md: 给接手AI的模块边界与复现入口"
+  - "lineage_trace/说明文件: 给人看的单文件模块说明"
+context_files:
+  - specs/2026-11-01-writing-harness-mcp.spec.md
+  - specs/2026-11-01-writing-harness-mcp.interfaces.md
+  - specs/2026-11-01-writing-harness-mcp.dialogue.md
+test_files:
+  - lineage_trace/后端代码/tests/test_lineage_trace.py
+test_changes: []
+allow_deps: []
+ai_directives: []

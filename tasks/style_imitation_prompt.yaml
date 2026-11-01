@@ -1,0 +1,26 @@
+---
+id: style_imitation_prompt
+spec: specs/2026-11-01-writing-harness-mcp.spec.md
+status: draft
+source: 自造
+verdict: 自造
+instruction: |
+  实现`style_imitation_prompt`且只实现这一职责：维护文风仿写角色唯一且版本化的提示词与输出约束。
+  完成判据：提示词按角色隔离；修改本模块不改变其他角色文件、schema或测试快照；非法版本拒绝。
+  必须满足spec需求R5,R7及相关通用错误、幂等、项目隔离条款；测试覆盖正常、失败和越权路径，并达到现有覆盖率门禁。
+boundary:
+  - "style_imitation_prompt/后端代码/命令.py: 提供该模块唯一的run入口和参数校验"
+  - "style_imitation_prompt/后端代码/实现/style_imitation_prompt.py: 实现该模块唯一职责"
+  - "style_imitation_prompt/后端代码/tests/test_style_imitation_prompt.py: 验证该模块专属验收条款"
+  - "style_imitation_prompt/资料文档/START.md: 给接手AI的模块边界与复现入口"
+  - "style_imitation_prompt/说明文件: 给人看的单文件模块说明"
+  - "style_imitation_prompt/资料文档/PROMPT.md: 保存本角色独立且版本化的提示词正文"
+context_files:
+  - specs/2026-11-01-writing-harness-mcp.spec.md
+  - specs/2026-11-01-writing-harness-mcp.interfaces.md
+  - specs/2026-11-01-writing-harness-mcp.dialogue.md
+test_files:
+  - style_imitation_prompt/后端代码/tests/test_style_imitation_prompt.py
+test_changes: []
+allow_deps: []
+ai_directives: []

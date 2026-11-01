@@ -1,0 +1,25 @@
+---
+id: stage_outline_big_payoff
+spec: specs/2026-11-01-writing-harness-mcp.spec.md
+status: draft
+source: 自造
+verdict: 自造
+instruction: |
+  实现`stage_outline_big_payoff`且只实现这一职责：校验人大纲与大爽点阶段的精确版本和人工批准。
+  完成判据：未批准或版本变化不能进入草稿；AI不能代替人提交。
+  必须满足spec需求R4及相关通用错误、幂等、项目隔离条款；测试覆盖正常、失败和越权路径，并达到现有覆盖率门禁。
+boundary:
+  - "stage_outline_big_payoff/后端代码/命令.py: 提供该模块唯一的run入口和参数校验"
+  - "stage_outline_big_payoff/后端代码/实现/stage_outline_big_payoff.py: 实现该模块唯一职责"
+  - "stage_outline_big_payoff/后端代码/tests/test_stage_outline_big_payoff.py: 验证该模块专属验收条款"
+  - "stage_outline_big_payoff/资料文档/START.md: 给接手AI的模块边界与复现入口"
+  - "stage_outline_big_payoff/说明文件: 给人看的单文件模块说明"
+context_files:
+  - specs/2026-11-01-writing-harness-mcp.spec.md
+  - specs/2026-11-01-writing-harness-mcp.interfaces.md
+  - specs/2026-11-01-writing-harness-mcp.dialogue.md
+test_files:
+  - stage_outline_big_payoff/后端代码/tests/test_stage_outline_big_payoff.py
+test_changes: []
+allow_deps: []
+ai_directives: []

@@ -1,0 +1,25 @@
+---
+id: artifact_commit
+spec: specs/2026-11-01-writing-harness-mcp.spec.md
+status: draft
+source: 自造
+verdict: 自造
+instruction: |
+  实现`artifact_commit`且只实现这一职责：把内容写入staging、发布不可变快照，并在单事务内提交版本、哈希、当前指针和journal。
+  完成判据：数据库失败不改变head；已提交后镜像可按journal补齐；内容哈希可验证。
+  必须满足spec需求R2,R14及相关通用错误、幂等、项目隔离条款；测试覆盖正常、失败和越权路径，并达到现有覆盖率门禁。
+boundary:
+  - "artifact_commit/后端代码/命令.py: 提供该模块唯一的run入口和参数校验"
+  - "artifact_commit/后端代码/实现/artifact_commit.py: 实现该模块唯一职责"
+  - "artifact_commit/后端代码/tests/test_artifact_commit.py: 验证该模块专属验收条款"
+  - "artifact_commit/资料文档/START.md: 给接手AI的模块边界与复现入口"
+  - "artifact_commit/说明文件: 给人看的单文件模块说明"
+context_files:
+  - specs/2026-11-01-writing-harness-mcp.spec.md
+  - specs/2026-11-01-writing-harness-mcp.interfaces.md
+  - specs/2026-11-01-writing-harness-mcp.dialogue.md
+test_files:
+  - artifact_commit/后端代码/tests/test_artifact_commit.py
+test_changes: []
+allow_deps: []
+ai_directives: []

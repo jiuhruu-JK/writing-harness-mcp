@@ -1,0 +1,25 @@
+---
+id: stage_ai_draft
+spec: specs/2026-11-01-writing-harness-mcp.spec.md
+status: draft
+source: 自造
+verdict: 自造
+instruction: |
+  实现`stage_ai_draft`且只实现这一职责：校验草稿阶段的输入仅来自人大纲和上一章定稿。
+  完成判据：输入越界、草稿缺失或base过期时拒绝推进。
+  必须满足spec需求R4,R7及相关通用错误、幂等、项目隔离条款；测试覆盖正常、失败和越权路径，并达到现有覆盖率门禁。
+boundary:
+  - "stage_ai_draft/后端代码/命令.py: 提供该模块唯一的run入口和参数校验"
+  - "stage_ai_draft/后端代码/实现/stage_ai_draft.py: 实现该模块唯一职责"
+  - "stage_ai_draft/后端代码/tests/test_stage_ai_draft.py: 验证该模块专属验收条款"
+  - "stage_ai_draft/资料文档/START.md: 给接手AI的模块边界与复现入口"
+  - "stage_ai_draft/说明文件: 给人看的单文件模块说明"
+context_files:
+  - specs/2026-11-01-writing-harness-mcp.spec.md
+  - specs/2026-11-01-writing-harness-mcp.interfaces.md
+  - specs/2026-11-01-writing-harness-mcp.dialogue.md
+test_files:
+  - stage_ai_draft/后端代码/tests/test_stage_ai_draft.py
+test_changes: []
+allow_deps: []
+ai_directives: []

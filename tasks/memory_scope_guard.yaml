@@ -1,0 +1,25 @@
+---
+id: memory_scope_guard
+spec: specs/2026-11-01-writing-harness-mcp.spec.md
+status: draft
+source: 自造
+verdict: 自造
+instruction: |
+  实现`memory_scope_guard`且只实现这一职责：强制项目、总记忆和外部修辞的作用域过滤。
+  完成判据：默认仅项目；不得任意枚举其他项目；未授权总记忆不可见；越权返回明确错误。
+  必须满足spec需求R8及相关通用错误、幂等、项目隔离条款；测试覆盖正常、失败和越权路径，并达到现有覆盖率门禁。
+boundary:
+  - "memory_scope_guard/后端代码/命令.py: 提供该模块唯一的run入口和参数校验"
+  - "memory_scope_guard/后端代码/实现/memory_scope_guard.py: 实现该模块唯一职责"
+  - "memory_scope_guard/后端代码/tests/test_memory_scope_guard.py: 验证该模块专属验收条款"
+  - "memory_scope_guard/资料文档/START.md: 给接手AI的模块边界与复现入口"
+  - "memory_scope_guard/说明文件: 给人看的单文件模块说明"
+context_files:
+  - specs/2026-11-01-writing-harness-mcp.spec.md
+  - specs/2026-11-01-writing-harness-mcp.interfaces.md
+  - specs/2026-11-01-writing-harness-mcp.dialogue.md
+test_files:
+  - memory_scope_guard/后端代码/tests/test_memory_scope_guard.py
+test_changes: []
+allow_deps: []
+ai_directives: []
