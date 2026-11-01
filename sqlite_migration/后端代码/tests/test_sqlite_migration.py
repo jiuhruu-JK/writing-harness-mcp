@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sqlite3
 import sys
 from pathlib import Path
@@ -14,7 +15,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "后端代码"))
 
-from 命令 import run  # noqa: E402
+_CMD_PATH = ROOT / "后端代码" / "命令.py"
+_spec = importlib.util.spec_from_file_location("sm_test_cmd", _CMD_PATH)
+命令 = importlib.util.module_from_spec(_spec)
+sys.modules["sm_test_cmd"] = 命令
+_spec.loader.exec_module(命令)
+run = 命令.run
 
 GOOD = "CREATE TABLE {name} (id INTEGER PRIMARY KEY);\n"
 
@@ -220,10 +226,10 @@ def test_blank_or_relative_path_rejected(layout, field: str, tmp_path: Path) -> 
 
 def test_relative_path_in_implementation_rejected(tmp_path: Path) -> None:
     """绕过薄壳直接调实现，越权路径仍被拒。"""
-    from 实现.sqlite_migration import SqliteMigrationError, migrate
+    SqliteMigrationError = 命令.SqliteMigrationError
 
     with pytest.raises(SqliteMigrationError) as caught:
-        migrate({"request_id": "r", "project_id": "p",
+        命令._IMPL.migrate({"request_id": "r", "project_id": "p",
                  "actor": {"actor_id": "a"}, "idempotency_key": "k",
                  "database_path": "rel.db", "migrations_root": str(tmp_path)})
     assert caught.value.code == "PROJECT_SCOPE_VIOLATION"
@@ -399,13 +405,11 @@ def test_symlink_migration_file_outside_root_rejected(tmp_path: Path) -> None:
 
 def test_other_project_rejected(tmp_path: Path, monkeypatch) -> None:
     """跨项目作用域：同一库文件登记为另一项目时不可见。"""
-    from 实现 import sqlite_migration as impl
-
     database = tmp_path / "state.db"
     root = tmp_path / "migrations"
     write_module(root, "alpha", 1, "first", ["documents"])
     run(payload(database, root))
-    monkeypatch.setattr(impl, "_scope_path", impl._scope_path)
+    monkeypatch.setattr(命令._IMPL, "_scope_path", 命令._IMPL._scope_path)
     result = run(payload(database, root, project_id="proj-2",
                          idempotency_key="key-2"))
     assert result["ok"] is True

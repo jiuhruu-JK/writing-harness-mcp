@@ -6,12 +6,38 @@ contract：specs/2026-11-01-writing-harness-mcp.interfaces.md 第一节
 
 from __future__ import annotations
 
-from 实现.project_registry import (CONFLICT, INVALID, ProjectRegistryError,
-                                  open_project, register, resolve)
+import importlib.util
+import sys
+from pathlib import Path
 
 ACTIONS = ("register", "open", "resolve")
 REQUIRED = ("request_id", "project_id", "actor", "idempotency_key", "action")
 ROOT_ACTION_NAMES = {"register": ("name",)}
+_IMPL_ALIAS = "writing_harness_project_registry_impl"
+
+
+def _load_impl():
+    """按唯一别名加载本模块的实现。
+
+    每个模块的入口都叫 `命令.py`、实现包都叫 `实现/`；把它们当顶层包
+    导入会让同进程内的模块互相顶替。这里按文件路径加载、用唯一模块名，
+    多个模块同进程共存不冲突。
+    """
+    existing = sys.modules.get(_IMPL_ALIAS)
+    if existing is not None:
+        return existing
+    source = Path(__file__).resolve().parent / "实现" / "project_registry.py"
+    spec = importlib.util.spec_from_file_location(_IMPL_ALIAS, source)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[_IMPL_ALIAS] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_IMPL = _load_impl()
+ProjectRegistryError = _IMPL.ProjectRegistryError
+INVALID = _IMPL.INVALID
+CONFLICT = _IMPL.CONFLICT
 
 
 def run(payload: dict) -> dict:
@@ -21,7 +47,7 @@ def run(payload: dict) -> dict:
         data = _dispatch(payload)
         return {"ok": True, "data": data, "error": None}
     except ProjectRegistryError as exc:
-        return {"ok": False, "data": None, **{"error": _error(exc)}}
+        return {"ok": False, "data": None, "error": _error(exc)}
     except Exception as exc:  # noqa: BLE001 —— 薄壳兜住未预期异常，仍返回 envelope
         return {"ok": False, "data": None,
                 "error": {"code": INVALID, "message": "请求无法处理",
@@ -67,10 +93,10 @@ def _validate(payload: dict) -> None:
 def _dispatch(payload: dict) -> dict:
     action = payload["action"]
     if action == "register":
-        return register(payload)
+        return _IMPL.register(payload)
     if action == "open":
-        return open_project(payload)
-    return resolve(payload)
+        return _IMPL.open_project(payload)
+    return _IMPL.resolve(payload)
 
 
 __all__ = ["run", "ProjectRegistryError", "ACTIONS", "CONFLICT"]

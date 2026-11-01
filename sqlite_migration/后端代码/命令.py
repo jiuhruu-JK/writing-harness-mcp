@@ -6,16 +6,44 @@ contract：specs/2026-11-01-writing-harness-mcp.interfaces.md 第一节
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import sys
+from pathlib import Path
 
-from 实现.sqlite_migration import INVALID, SqliteMigrationError, migrate
+REQUIRED = ("request_id", "project_id", "actor", "idempotency_key",
+            "database_path", "migrations_root")
+_IMPL_ALIAS = "writing_harness_sqlite_migration_impl"
+
+
+def _load_impl():
+    """按唯一别名加载本模块的实现。
+
+    每个模块的入口都叫 `命令.py`、实现包都叫 `实现/`；把它们当顶层包
+    导入会让同进程内的模块互相顶替。这里按文件路径加载、用唯一模块名，
+    多个模块同进程共存不冲突。
+    """
+    existing = sys.modules.get(_IMPL_ALIAS)
+    if existing is not None:
+        return existing
+    source = Path(__file__).resolve().parent / "实现" / "sqlite_migration.py"
+    spec = importlib.util.spec_from_file_location(_IMPL_ALIAS, source)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[_IMPL_ALIAS] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_IMPL = _load_impl()
+SqliteMigrationError = _IMPL.SqliteMigrationError
+INVALID = _IMPL.INVALID
 
 
 def run(payload: dict) -> dict:
     """薄壳只做三件事：校验入参、分发到实现、封装返回。"""
     try:
         _validate(payload)
-        data = migrate(payload)
+        data = _IMPL.migrate(payload)
         return {"ok": True, "data": data, "error": None}
     except SqliteMigrationError as exc:
         return {"ok": False, "data": None,
@@ -31,9 +59,7 @@ def _validate(payload: dict) -> None:
     """校验 envelope 与业务字段；所有键名以接口总表为准。"""
     if not isinstance(payload, dict):
         raise SqliteMigrationError(INVALID, "payload 必须是 dict", {})
-    missing = [key for key in ("request_id", "project_id", "actor",
-                              "idempotency_key", "database_path",
-                              "migrations_root") if key not in payload]
+    missing = [key for key in REQUIRED if key not in payload]
     if missing:
         raise SqliteMigrationError(INVALID, "缺必填入参", {"missing": missing})
     actor = payload["actor"]

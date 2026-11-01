@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import sys
@@ -15,7 +16,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "后端代码"))
 
-from 命令 import ProjectRegistryError, run  # noqa: E402
+_CMD_PATH = ROOT / "后端代码" / "命令.py"
+_spec = importlib.util.spec_from_file_location("pr_test_cmd", _CMD_PATH)
+命令 = importlib.util.module_from_spec(_spec)
+sys.modules["pr_test_cmd"] = 命令
+_spec.loader.exec_module(命令)
+run = 命令.run
+ProjectRegistryError = 命令.ProjectRegistryError
 
 REGISTRY_DIR = ".writing-harness"
 MARKER = "project.json"
@@ -325,10 +332,8 @@ def test_cross_project_records_invisible(tmp_path: Path) -> None:
 
 def test_errors_are_single_class_with_code(root: Path) -> None:
     """每个模块一个异常类：实现层抛同一个类，薄壳映射成稳定错误码。"""
-    from 实现.project_registry import register
-
     with pytest.raises(ProjectRegistryError) as caught:
-        register(payload("register", root, name="长夜", root_path="rel"))
+        命令._IMPL.register(payload("register", root, name="长夜", root_path="rel"))
     assert caught.value.code == "PROJECT_SCOPE_VIOLATION"
     assert caught.value.message
     assert caught.value.details["root_path"] == "rel"
