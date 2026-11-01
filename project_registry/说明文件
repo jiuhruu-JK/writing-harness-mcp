@@ -1,0 +1,58 @@
+# project_registry —— 项目登记与数据隔离
+
+一个模块一个职责：登记一个项目数据根，返回稳定 `project_id`，并把之后所有路径读取锁在该根内。
+
+```text
+project_registry/
+├── 后端代码/
+│   ├── 命令.py                    run 薄壳：校验入参 → 调实现 → 返回 envelope
+│   ├── 实现/
+│   │   └── project_registry.py    登记、打开、作用域强制、路径逃逸拒绝
+│   └── tests/
+│       └── test_project_registry.py  同步测试：正常 / 失败 / 越权，36 条
+├── 资料文档/
+│   └── START.md                  接手 AI 的入口：阶段、规则、复现命令
+└── 说明文件                       本文件：给人看的单页说明
+```
+
+## 它解决什么
+
+不同写作 Agent 在同一个项目文件夹接力，「同一个」这件事必须先有确定身份。本模块给出 `project_id`，并保证三件事：
+
+1. 同一数据根只对应一个项目。
+2. 任何读取路径都不能指到根外。
+3. 换一个项目身份来看，别的项目记录不可见。
+
+## 三个动作
+
+| action | 做什么 | 关键入参 |
+|---|---|---|
+| `register` | 登记数据根，返回项目身份 | `root_path`、`name` |
+| `open` | 打开已登记数据根 | `root_path`、`project_id`（留空=首次打开） |
+| `resolve` | 把根内相对路径解析成真实路径 | `name` 当相对路径 |
+
+## 拒绝什么
+
+- 相对路径的数据根、含 `..` 的路径、指到根外的符号链接 → `PROJECT_SCOPE_VIOLATION`
+- 同一数据根换名字登记 → `CONFLICT`
+- 同一幂等键换请求内容 → `IDEMPOTENCY_KEY_REUSE`
+- 没登记就打开 → `PROJECT_NOT_REGISTERED`
+
+## 数据落盘
+
+```text
+<数据根>/.writing-harness/project.json     项目身份：project_id、name、schema_version、registered_at
+<数据根>/.writing-harness/idempotency.json 幂等台账：actor_id、key、request_hash、首次结果
+```
+
+两份文件都先写临时文件、`fsync`、再 `os.replace` 原子替换：写到一半崩掉不会留下半个档案。
+
+## 验收
+
+```bash
+.venv/bin/python .agents/gate.py project_registry/ --spec specs/2026-11-01-writing-harness-mcp.spec.md
+```
+
+末行 `GATE PASS`；当前实测覆盖率 98.1%。
+
+条款出处：`specs/2026-11-01-writing-harness-mcp.spec.md` 要求 R1；字段出处：同目录接口总表第一节。
