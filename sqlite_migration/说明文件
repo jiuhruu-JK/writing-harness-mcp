@@ -9,7 +9,7 @@ sqlite_migration/
 │   ├── 实现/
 │   │   └── sqlite_migration.py    读声明、顺序执行、逐迁移事务、幂等台账
 │   └── tests/
-│       └── test_sqlite_migration.py  同步测试：正常 / 失败 / 越权，33 条
+│       └── test_sqlite_migration.py  同步测试：正常 / 失败 / 越权，35 条
 ├── 资料文档/
 │   └── START.md                  接手 AI 的入口：阶段、规则、复现命令
 └── 说明文件                       本文件：给人看的单页说明

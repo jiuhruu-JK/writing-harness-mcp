@@ -30,7 +30,7 @@ sqlite_migration/
 │   ├── 实现/
 │   │   └── sqlite_migration.py    唯一职责：读迁移声明、顺序执行、事务回滚、幂等台账
 │   └── tests/
-│       └── test_sqlite_migration.py  正常 / 失败 / 越权 33 条
+│       └── test_sqlite_migration.py  正常 / 失败 / 越权 35 条
 ├── 资料文档/
 │   └── START.md                  本文件
 └── 说明文件                       给人看的单页说明
@@ -79,7 +79,7 @@ sqlite_migration/
 - 台账自己建两张表：`schema_migrations`（已执行版本）与 `migration_requests`（幂等请求）。这两张表由本模块负责，不算业务表。
 - 每个迁移各开一个 `BEGIN IMMEDIATE` 事务：语句与版本记录同进同退。第 2 个迁移失败，第 1 个已执行的保留，失败的那个整体回滚——不留半张表。
 - 幂等：同 actor、同 key、同请求返回首次结果；同 key 换请求内容判 `IDEMPOTENCY_KEY_REUSE`。
-- 语句按完整语句切分，用 `sqlite3.complete_statement` 判断边界，所以字符串与注释里的分号不算语句分隔。
+- 语句按完整语句切分，用 `sqlite3.complete_statement` 逐字符判断边界：字符串与注释里的分号不算分隔，同一行写两条语句也能拆开。最后一条语句后的整行注释不算残留语句。
 - 已执行的迁移文件内容被改动即判 `CONFLICT`：历史迁移不可改写，改行为就加新文件。
 
 ## 复现
