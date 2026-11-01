@@ -36,6 +36,32 @@ sqlite_migration/
 └── 说明文件                       给人看的单页说明
 ```
 
+## 为什么自造（选型留档）
+
+任务卡 `tasks/sqlite_migration.yaml` 记 `source: 自造`、`verdict: 自造`、`allow_deps: []`。下面是判定依据，事实均可自己复跑。
+
+四条硬约束：运行时零第三方依赖；入口是 `run(payload: dict) -> dict` 且键名按接口总表；`spec:255` 要求写模块在同一 SQLite 事务内校验幂等键（即整次调用一个事务）；本项目特有语义（`<模块目录>/<seq>_<slug>.sql` 顺序、`-- tables:` 声明头、库按项目独占）。
+
+已核对的主流候选与排除原因：
+
+| 候选 | 实测事实 | 排除原因 |
+|---|---|---|
+| `alembic` 1.20.1 | `requires_dist` 含 `SQLAlchemy>=2.0`、`Mako`、`typing-extensions>=4.12`、`tomli`、`tzdata` | 引入即违反零依赖 |
+| `yoyo-migrations` 9.0.0 | `requires_dist` 含 `sqlparse`、`tabulate`、`importlib-metadata>=3.6.0` | 同上 |
+| `sqlite-utils` 4.2.1 | 依赖含 `click`、`pluggy`、`python-dateutil`、`sqlite-fts4`、`tabulate`、`pip`；`Migrations` 是 Python 函数回调 | 依赖过重且非 `.sql` 文件形态 |
+| `simonw/sqlite-migrate` | README 自述 "Deprecated compatibility package"，依赖 `sqlite-utils>=4` | 已弃用 |
+| `fastmigrate` 0.5.3 | 依赖 `apswutils>=0.0.2` | 违反零依赖 |
+| `sqlstep` 0.1.0 | MIT、零依赖、0 star（建仓 2026-08-24，PyPI 仅 1 个版本） | 记录表 `version TEXT PRIMARY KEY` 无 `project_id`（做不到项目独占）；每个迁移各自一个事务（违反单事务要求）；单文件带 `-- migrate:down` 与 `no-transaction` 逃生口；无 `-- tables:` 声明头 |
+| `larzmigrate` 0.1.0 | MIT、零依赖、0 star（建仓 2026-07-26，1 个发布版本） | 记录表 `(id TEXT PRIMARY KEY, checksum TEXT)` 无 `project_id`；每迁移单独 `commit()` |
+
+结论：**没有同时满足上述四条硬约束的成熟库**。star 超过 `source_gate.py` 的 `STAR_MIN = 1000` 的那批全部在零依赖这条上出局；零依赖又有 `.sql` 形态的那两个候选（`sqlstep`、`larzmigrate`）都缺项目隔离列且按迁移逐条提交，与 R1 和 `spec:255` 直接冲突。
+
+可以复用的部分没有自造：
+- 路径校验用标准库 `os.path.realpath` 与 `Path.is_relative_to`（`实现/sqlite_migration.py:104`、`:194`）。
+- 语句切分用标准库 `sqlite3.complete_statement`（`:257`），它由 SQLite 自己的词法器驱动；与 `sqlstep.split` 在「触发器体含分号」「字符串/注释含分号」用例上实测结果一致。
+
+完成判据：上面表格每行都能用一次 PyPI JSON 请求复现（`curl -s -H "User-Agent: dsh" https://pypi.org/pypi/<包名>/json` 看 `requires_dist`），star 用 `https://api.github.com/repos/<owner>/<repo>`。
+
 ## 接口
 
 ```text

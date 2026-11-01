@@ -59,4 +59,6 @@ project_registry/
 
 末行 `GATE PASS`；当前实测覆盖率 100.0%。
 
+上游选型：社区无「单数据根登记 + 根内隔离」形态的成熟库（`werkzeug.security.safe_join` 明写不查符号链接且依赖 markupsafe），故判自造；路径原语用标准库 `os.path.realpath` 与 `Path.is_relative_to`。逐条候选与排除理由见 `资料文档/START.md` 的「为什么自造」一节。
+
 条款出处：`specs/2026-11-01-writing-harness-mcp.spec.md` 要求 R1；字段出处：同目录接口总表第一节。

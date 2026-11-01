@@ -59,4 +59,6 @@ CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT);
 
 末行 `GATE PASS`；当前实测覆盖率 ≥96.8%（多次实跑 96.8–98.1%，并发用例的线程交错会影响分支覆盖）。
 
+上游选型：无同时满足「零依赖 + 整次调用一个事务 + 记录表带项目归属」的成熟库（`sqlstep`、`larzmigrate` 零依赖但记录表无 `project_id` 且按迁移逐条提交；`alembic`、`yoyo-migrations`、`sqlite-utils` 依赖过重），故判自造。逐条候选与排除理由见 `资料文档/START.md` 的「为什么自造」一节。
+
 条款出处：`specs/2026-11-01-writing-harness-mcp.spec.md` 要求 R1、R14；字段出处：同目录接口总表第一节。

@@ -36,6 +36,27 @@ project_registry/
 └── 说明文件                       给人看的单页说明
 ```
 
+## 为什么自造（选型留档）
+
+任务卡 `tasks/project_registry.yaml` 记 `source: 自造`、`verdict: 自造`、`allow_deps: []`。下面是判定依据，事实均可自己复跑。
+
+四条硬约束：运行时零第三方依赖；入口是 `run(payload: dict) -> dict` 且键名按接口总表；`spec:255` 要求写模块在同一 SQLite 事务内校验幂等键（即整次调用一个事务）；本项目特有语义（数据根登记、根套娃拒绝、跨项目记录不可见）。
+
+已核对候选与排除原因：
+
+| 候选 | 实测事实 | 排除原因 |
+|---|---|---|
+| `werkzeug` 的 `security.safe_join` | BSD-3、6880 star；文档原文 "it does not validate if it does or does not exist, if it is a symlink" | 不查符号链接，而本模块必须查；且依赖 `markupsafe>=2.1.1` |
+| `pathvalidate` | MIT、297 star | 做文件名消毒，不是数据根作用域守卫；引入即违反零依赖 |
+| `canyon` | GitHub API 404，取不到 | 无法登记事实，不采用 |
+| `django-idempotency-key` / `drf-idempotency-key` / `idemkey` / `idemkit` | HTTP 中间件形态；`idemkey` 无 `project_urls`、仅 1 个版本、README 自述 "not yet published" 与 PyPI 已有发布自相矛盾；`idemkit` extras 极重 | 无「按项目分记 + dict 信封」形态 |
+
+结论：**社区没有「单数据根登记 + 根内隔离」这个形态的成熟库**——`python project registry single root` 方向检索只得到 MCP outbox 与 FastAPI 幂等中间件。R1 的三条场景里，路径原语（不许 `..`、根外符号链接）社区与标准库都有；真正自造的只是登记簿语义（`root_path UNIQUE`、根套娃检测、`project_id` 作用域校验），这正是本项目特有需求。
+
+可以复用的部分没有自造：路径校验用标准库 `os.path.realpath` 与 `Path.is_relative_to`（`实现/project_registry.py:172`、`:185`、`:190`），比 `safe_join` 更严（我们查符号链接，它不查）。
+
+完成判据：上面每条都能复现——star 与许可证用 `https://api.github.com/repos/<owner>/<repo>`，依赖用 `curl -s -H "User-Agent: dsh" https://pypi.org/pypi/<包名>/json` 看 `requires_dist`。
+
 ## 接口
 
 ```text
