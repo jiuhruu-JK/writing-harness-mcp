@@ -611,3 +611,39 @@ def test_rollback_failure_does_not_mask_original_error(tmp_path: Path,
     result = run(payload(database, root))
     assert result["error"]["code"] == "MIGRATION_FAILED"
     assert result["error"]["details"]["name"] == "broken"
+
+
+def test_no_pending_migration_does_not_block_foreign_table(tmp_path: Path) -> None:
+    """无新迁移可跑时不校验外部表：别家模块在同一个库里建表属正常共用。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    write_module(root, "alpha", 1, "first", ["documents"])
+    run(payload(database, root))
+    connection = sqlite3.connect(str(database))
+    try:
+        connection.execute("CREATE TABLE from_other_module (id INTEGER)")
+        connection.commit()
+    finally:
+        connection.close()
+    again = run(payload(database, root, idempotency_key="key-2"))
+    assert again["ok"] is True, again
+    assert again["data"]["current_version"] == 1
+
+
+def test_pending_migration_still_checks_declared_tables(tmp_path: Path) -> None:
+    """有新迁移要跑时仍校验：外部表已存在也不算本次迁移建的。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    write_module(root, "alpha", 1, "first", ["documents"])
+    run(payload(database, root))
+    connection = sqlite3.connect(str(database))
+    try:
+        connection.execute("CREATE TABLE from_other_module (id INTEGER)")
+        connection.commit()
+    finally:
+        connection.close()
+    write_module(root, "alpha", 2, "second", ["notes"])
+    result = run(payload(database, root, idempotency_key="key-2"))
+    assert result["ok"] is False
+    assert result["error"]["code"] == "MIGRATION_FAILED"
+    assert "from_other_module" in result["error"]["details"]["undeclared_tables"]

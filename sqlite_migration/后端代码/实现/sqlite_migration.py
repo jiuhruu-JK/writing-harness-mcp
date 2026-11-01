@@ -76,7 +76,8 @@ def migrate(request: dict) -> dict:
         plan = _plan(root)
         _guard_order(plan, applied)
         _apply(connection, plan, applied, project)
-        _verify_tables(connection, plan)
+        if len(applied) < len(plan):  # 本次确实建了东西才校验，无新迁移不拦外部表
+            _verify_tables(connection, plan)
         result = _result(connection, project)
         _remember(connection, actor_id, key, fingerprint, result)
         connection.execute("COMMIT")
@@ -97,8 +98,8 @@ def migrate(request: dict) -> dict:
 def _scope_path(raw: str, field: str) -> Path:
     """数据库与迁移根都必须是真实绝对路径；相对路径和目录穿越一律拒绝。"""
     if not os.path.isabs(text := str(raw).strip()) or ".." in Path(text).parts:
-        raise SqliteMigrationError(
-            SCOPE, "路径必须是绝对路径且不含目录穿越", {"field": field, "path": text})
+        raise SqliteMigrationError(SCOPE, "路径必须是绝对路径且不含目录穿越",
+                                   {"field": field, "path": text})
     return Path(os.path.realpath(text))
 
 
@@ -213,8 +214,7 @@ def _plan(root: Path) -> list[dict]:
 
 def _declared(text: str, path: Path) -> list[str]:
     """读文件头的 `-- tables: a, b` 声明；没有声明就一个表都不许建。"""
-    match = TABLES.search(text)
-    if match is None:
+    if (match := TABLES.search(text)) is None:
         return []
     if not (names := [n.strip() for n in match.group("list").split(",") if n.strip()]):
         raise SqliteMigrationError(
