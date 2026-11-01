@@ -647,3 +647,30 @@ def test_pending_migration_still_checks_declared_tables(tmp_path: Path) -> None:
     assert result["ok"] is False
     assert result["error"]["code"] == "MIGRATION_FAILED"
     assert "from_other_module" in result["error"]["details"]["undeclared_tables"]
+
+
+def test_transaction_control_in_migration_rejected(tmp_path: Path) -> None:
+    """迁移文件自带 BEGIN/COMMIT 会破坏外层事务，判不合规并整体回滚。"""
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    path = root / "alpha" / "1_evil.sql"
+    path.parent.mkdir(parents=True)
+    path.write_text("-- tables: t1\nBEGIN;\nCREATE TABLE t1 (id INTEGER);\nCOMMIT;\n",
+                    encoding="utf-8")
+    result = run(payload(database, root))
+    assert result["ok"] is False
+    assert result["error"]["code"] == "MIGRATION_FAILED"
+    assert result["error"]["details"]["statement"].startswith("BEGIN")
+    assert tables(database) == set()
+
+
+@pytest.mark.parametrize("word", ["BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT"])
+def test_each_transaction_control_word_rejected(tmp_path: Path, word: str) -> None:
+    database = tmp_path / "state.db"
+    root = tmp_path / "migrations"
+    path = root / "alpha" / "1_evil.sql"
+    path.parent.mkdir(parents=True)
+    path.write_text(f"-- tables: t1\n{word};\nCREATE TABLE t1 (id INTEGER);\n",
+                    encoding="utf-8")
+    result = run(payload(database, root))
+    assert result["error"]["code"] == "MIGRATION_FAILED"

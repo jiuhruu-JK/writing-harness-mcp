@@ -30,7 +30,7 @@ sqlite_migration/
 │   ├── 实现/
 │   │   └── sqlite_migration.py    唯一职责：读迁移声明、顺序执行、事务回滚、幂等台账
 │   └── tests/
-│       └── test_sqlite_migration.py  正常 / 失败 / 越权 49 条
+│       └── test_sqlite_migration.py  正常 / 失败 / 越权 54 条
 ├── 资料文档/
 │   └── START.md                  本文件
 └── 说明文件                       给人看的单页说明
@@ -68,7 +68,7 @@ sqlite_migration/
 |---|---|
 | `MIGRATION_ORDER_CONFLICT` | 同一模块顺序号不连续；新迁移排到已执行迁移之前；已执行数多于声明数 |
 | `CONFLICT` | 已执行迁移的文件内容被改动（checksum 不符） |
-| `MIGRATION_FAILED` | 语句执行失败；文件名不合规；建了未声明表；声明为空；末尾有不完整语句；库打不开 |
+| `MIGRATION_FAILED` | 语句执行失败；文件名不合规；建了未声明表；声明为空；末尾有不完整语句；迁移文件自带 `BEGIN`/`COMMIT` 等事务控制语句；库打不开 |
 | `MIGRATIONS_ROOT_MISSING` | 迁移根不是目录 |
 | `PROJECT_SCOPE_VIOLATION` | 路径为相对或含 `..`；迁移文件真实路径落到迁移根之外；缺项目作用域；库里已有别家项目的迁移记录 |
 | `IDEMPOTENCY_KEY_REUSE` | 同 actor、同 key、不同请求 |
@@ -82,6 +82,7 @@ sqlite_migration/
 - 幂等：同 actor、同 key、同请求返回首次结果；同 key 换请求内容判 `IDEMPOTENCY_KEY_REUSE`。幂等读写在事务内，多线程同键并发时排队等锁，全部拿到首次结果。
 - 并发：连接用 `busy_timeout=10s`；并发首建同一个库、切换 WAL 需要独占锁，失败时按 20 次 × 50ms 重试，不把同伴顶掉。
 - 语句按完整语句切分，用 `sqlite3.complete_statement` 逐字符判断边界：字符串与注释里的分号不算分隔，同一行写两条语句也能拆开。最后一条语句后的整行注释不算残留语句。
+- 迁移文件不得自带 `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT` 等事务控制语句：整次调用已在一个事务里，自带事务会把它撑破，出现 `cannot start a transaction within a transaction`；这类文件在切分阶段就判不合规，不执行。
 - 已执行的迁移文件内容被改动即判 `CONFLICT`：历史迁移不可改写，改行为就加新文件。
 
 ## 复现

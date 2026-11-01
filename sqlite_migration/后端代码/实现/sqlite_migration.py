@@ -23,12 +23,9 @@ PRAGMA_RETRIES, PRAGMA_BACKOFF = 20, 0.05  # 并发首建库时排队重试
 VERSION_TABLE, REQUEST_TABLE = "schema_migrations", "migration_requests"
 BOOKKEEPING = (VERSION_TABLE, REQUEST_TABLE)
 
-SCOPE = "PROJECT_SCOPE_VIOLATION"
-CONFLICT = "CONFLICT"
-REUSE = "IDEMPOTENCY_KEY_REUSE"
-ORDER = "MIGRATION_ORDER_CONFLICT"
-FAILED = "MIGRATION_FAILED"
-NO_ROOT = "MIGRATIONS_ROOT_MISSING"
+SCOPE, CONFLICT = "PROJECT_SCOPE_VIOLATION", "CONFLICT"
+REUSE, ORDER = "IDEMPOTENCY_KEY_REUSE", "MIGRATION_ORDER_CONFLICT"
+FAILED, NO_ROOT = "MIGRATION_FAILED", "MIGRATIONS_ROOT_MISSING"
 INVALID = "INVALID_PAYLOAD"
 
 BOOKKEEPING_DDL = (
@@ -41,6 +38,7 @@ BOOKKEEPING_DDL = (
     " recorded_at TEXT NOT NULL, PRIMARY KEY (actor_id, key))")
 
 FILE = re.compile(r"^(?P<seq>[0-9]+)_(?P<slug>[^/\\]+)\.sql$")
+CONTROL = re.compile(r"^(BEGIN|COMMIT|ROLLBACK|END|SAVEPOINT|RELEASE)\b", re.I)
 TABLES = re.compile(r"^--\s*tables\s*:\s*(?P<list>.*)$", re.M)
 
 
@@ -104,7 +102,7 @@ def _scope_path(raw: str, field: str) -> Path:
 
 
 def _connect(database: Path) -> sqlite3.Connection:
-    """打开库文件：WAL、外键，手动事务。"""
+    """打开库文件：WAL、外键、手动事务。"""
     try:
         database.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(str(database), isolation_level=None,
@@ -137,13 +135,11 @@ def _ensure_bookkeeping(connection: sqlite3.Connection) -> None:
 
 def _applied(connection: sqlite3.Connection, project: str) -> list[dict]:
     """只读本项目的迁移记录；库里出现别家项目记录即判跨项目越权。"""
-    rows = connection.execute(
-        f"SELECT project_id, version, module, seq, name, checksum"
-        f" FROM {VERSION_TABLE}").fetchall()
-    if foreign := sorted({row[0] for row in rows if row[0] != project}):
-        raise SqliteMigrationError(
-            SCOPE, "数据库里有其他项目的迁移记录",
-            {"project_id": project, "other_project_ids": foreign})
+    rows = connection.execute(f"SELECT project_id, version, module, seq, name,"
+                              f" checksum FROM {VERSION_TABLE}").fetchall()
+    if foreign := sorted({r[0] for r in rows if r[0] != project}):
+        raise SqliteMigrationError(SCOPE, "数据库里有其他项目的迁移记录",
+                                   {"project_id": project, "other_project_ids": foreign})
     keys = ("version", "module", "seq", "name", "checksum")
     return [dict(zip(keys, row[1:])) for row in rows]
 
@@ -157,9 +153,8 @@ def _replay(connection: sqlite3.Connection, actor_id: str, key: str,
     if row is None:
         return None
     if row[0] != fingerprint:
-        raise SqliteMigrationError(
-            REUSE, "同一幂等键被不同请求复用",
-            {"idempotency_key": key, "actor_id": actor_id})
+        raise SqliteMigrationError(REUSE, "同一幂等键被不同请求复用",
+                                   {"idempotency_key": key, "actor_id": actor_id})
     return json.loads(row[1])
 
 
@@ -173,8 +168,8 @@ def _remember(connection: sqlite3.Connection, actor_id: str, key: str,
 
 
 def _result(connection: sqlite3.Connection, project: str) -> dict:
-    """本项目的已执行版本列表与当前版本。"""
-    versions = [row[0] for row in connection.execute(
+    """本项目已执行版本列表与当前版本。"""
+    versions = [r[0] for r in connection.execute(
         f"SELECT version FROM {VERSION_TABLE} WHERE project_id = ?"
         " ORDER BY version", (project,))]
     return {"applied_versions": versions, "current_version": versions[-1] if versions else 0}
@@ -206,9 +201,8 @@ def _plan(root: Path) -> list[dict]:
                          "checksum": hashlib.sha256(text.encode()).hexdigest(),
                          "text": text, "tables": _declared(text, path)})
         if seqs and seqs != list(range(1, len(seqs) + 1)):
-            raise SqliteMigrationError(
-                ORDER, "同一模块的顺序号必须从 1 起连续",
-                {"module": module_dir.name, "seqs": seqs})
+            raise SqliteMigrationError(ORDER, "同一模块的顺序号必须从 1 起连续",
+                                       {"module": module_dir.name, "seqs": seqs})
     return plan
 
 
@@ -217,8 +211,8 @@ def _declared(text: str, path: Path) -> list[str]:
     if (match := TABLES.search(text)) is None:
         return []
     if not (names := [n.strip() for n in match.group("list").split(",") if n.strip()]):
-        raise SqliteMigrationError(
-            FAILED, "`-- tables:` 声明为空", {"path": str(path)})
+        raise SqliteMigrationError(FAILED, "`-- tables:` 声明为空",
+                                   {"path": str(path)})
     return names
 
 
@@ -249,10 +243,9 @@ def _apply(connection: sqlite3.Connection, plan: list[dict],
             for statement in _statements(entry["text"]):
                 connection.execute(statement)
         except sqlite3.Error as exc:
-            raise SqliteMigrationError(
-                FAILED, "迁移语句执行失败",
-                {"module": entry["module"], "name": entry["name"],
-                 "reason": str(exc)}) from exc
+            raise SqliteMigrationError(FAILED, "迁移语句执行失败",
+                                       {"module": entry["module"], "reason": str(exc),
+                                        "name": entry["name"]}) from exc
         connection.execute(
             f"INSERT INTO {VERSION_TABLE} (project_id, version, module, seq, name,"
             " checksum, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -263,7 +256,7 @@ def _apply(connection: sqlite3.Connection, plan: list[dict],
 def _statements(text: str) -> list[str]:
     """按完整语句切分：字符串与注释里的分号不算边界。
 
-    逐字符累积，`complete_statement` 为真即切一条，同一行两条语句也能分开。
+    逐字符累积，`complete_statement` 真即切一条，同一行两条也能分开。
     """
     statements: list[str] = []
     buffer = ""
@@ -273,11 +266,17 @@ def _statements(text: str) -> list[str]:
             if buffer.strip() != ";":
                 statements.append(buffer)
             buffer = ""
-    leftover = [line.strip() for line in buffer.splitlines()
-                if line.strip() and not line.strip().startswith("--")]
-    if leftover:  # 末尾只剩空白与整行注释时不算残留语句
-        raise SqliteMigrationError(
-            FAILED, "迁移文件末尾有不完整语句", {"tail": leftover[0][:80]})
+    tail = [s.strip() for s in buffer.splitlines()
+            if s.strip() and not s.strip().startswith("--")]
+    if tail:  # 末尾只剩空白与整行注释时不算残留语句
+        raise SqliteMigrationError(FAILED, "迁移文件末尾有不完整语句",
+                                   {"tail": tail[0][:80]})
+    for statement in statements:  # 头注释之后的语句也要认出 BEGIN
+        head = next((s.strip() for s in statement.splitlines()
+                     if s.strip() and not s.strip().startswith("--")), "")
+        if CONTROL.match(head):
+            raise SqliteMigrationError(FAILED, "迁移文件不得自带事务控制语句",
+                                       {"statement": head[:40]})
     return statements
 
 
