@@ -105,7 +105,7 @@ cd sqlite_migration && ../.venv/bin/python -m pytest 后端代码/tests -q
 .venv/bin/python .agents/gate.py sqlite_migration/ --spec specs/2026-11-01-writing-harness-mcp.spec.md
 ```
 
-末行必须是 `GATE PASS`。当前实测：`GATE PASS`，覆盖率 96.7%。
+末行必须是 `GATE PASS`。当前实测：`GATE PASS`，覆盖率 96.8%。
 
 手动冒烟（在仓库根跑）：
 
