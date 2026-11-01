@@ -55,6 +55,6 @@ CREATE TABLE documents (id INTEGER PRIMARY KEY, body TEXT);
 .venv/bin/python .agents/gate.py sqlite_migration/ --spec specs/2026-11-01-writing-harness-mcp.spec.md
 ```
 
-末行 `GATE PASS`；当前实测覆盖率 ≥96.7%（多次实跑区间 96.7–98.0%）。
+末行 `GATE PASS`；当前实测覆盖率 ≥96.7%（多次实跑区间 96.7–98.1%）。
 
 条款出处：`specs/2026-11-01-writing-harness-mcp.spec.md` 要求 R1、R14；字段出处：同目录接口总表第一节。
